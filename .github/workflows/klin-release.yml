@@ -204,8 +204,12 @@ jobs:
           Remove-Item Env:ELECTRON_RUN_AS_NODE
 
           # The desktop app itself: its own profile, home folder and port.
-          $app = Start-Process -FilePath $exe -PassThru
-          $deadline = (Get-Date).AddSeconds(90)
+          $stdout = Join-Path $env:RUNNER_TEMP 'klin-stdout.txt'
+          $stderr = Join-Path $env:RUNNER_TEMP 'klin-stderr.txt'
+          $env:ELECTRON_ENABLE_LOGGING = '1'
+          $app = Start-Process -FilePath $exe -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+          Remove-Item Env:ELECTRON_ENABLE_LOGGING
+          $deadline = (Get-Date).AddSeconds(150)
           $ready = $false
           while ((Get-Date) -lt $deadline -and -not $ready) {
             Start-Sleep -Seconds 2
@@ -214,10 +218,24 @@ jobs:
               $ready = $true
             } catch {}
           }
-          $logs = Join-Path $env:USERPROFILE '.klin\userdata\logs'
-          Get-ChildItem $logs -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "--- $($_.Name)"; Get-Content $_.FullName -Tail 40 }
-          Get-Process | Where-Object { $_.Path -like "$dir\*" } | Stop-Process -Force
-          if (-not $ready) { Fail 'The desktop app did not answer on 127.0.0.1:4773 within 90 seconds' }
+          $klin = @(Get-Process | Where-Object { $_.Path -like "$dir\*" })
+          Write-Host "--- Klin processes: $($klin.Count)"
+          $klin | ForEach-Object { Write-Host "$($_.Id) $($_.ProcessName) started $($_.StartTime)" }
+          Write-Host '--- Klin listeners'
+          Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue |
+            Where-Object { $_.OwningProcess -in $klin.Id } |
+            ForEach-Object { Write-Host "$($_.LocalAddress):$($_.LocalPort) pid $($_.OwningProcess)" }
+          Write-Host '--- Klin files'
+          Get-ChildItem "$env:USERPROFILE\.klin", "$env:APPDATA\klin" -Recurse -Depth 2 -ErrorAction SilentlyContinue |
+            Select-Object -First 80 | ForEach-Object { Write-Host $_.FullName }
+          Get-ChildItem "$env:USERPROFILE\.klin\userdata\logs" -File -ErrorAction SilentlyContinue |
+            ForEach-Object { Write-Host "--- $($_.Name)"; Get-Content $_.FullName -Tail 60 | ForEach-Object { Write-Host $_ } }
+          foreach ($stream in @($stdout, $stderr)) {
+            Write-Host "--- $stream"
+            Get-Content $stream -Tail 80 -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_ }
+          }
+          $klin | Stop-Process -Force -ErrorAction SilentlyContinue
+          if (-not $ready) { Fail 'The desktop app did not answer on 127.0.0.1:4773 within 150 seconds' }
           foreach ($own in @("$env:USERPROFILE\.klin\userdata", "$env:APPDATA\klin")) {
             if (-not (Test-Path $own)) { Fail "Klin did not create $own" }
           }
