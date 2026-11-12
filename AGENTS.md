@@ -4,7 +4,9 @@ Klin is Ash's fork of [T3 Code](https://github.com/pingdotgg/t3code), a minimal 
 
 ## Upstream
 
-`upstream` is pingdotgg/t3code. Klin merges its releases in; it does not rebase. Klin deleted the mobile app (`apps/mobile`), the marketing site (`apps/marketing`), T3's bot and contribution configs, and T3's CI and release workflows. When an upstream merge brings changes to deleted paths, keep them deleted. Klin's CI is `.github/workflows/klin-ci.yml`; copy any new upstream checks into it instead of restoring `ci.yml`.
+`upstream` is pingdotgg/t3code. Klin merges its releases in; it does not rebase. Klin deleted the mobile app (`apps/mobile`), the marketing site (`apps/marketing`), T3's bot and contribution configs, and T3's CI and release workflows. When an upstream merge brings changes to deleted paths, keep them deleted. Klin's CI is `.github/workflows/klin-ci.yml`; copy any new upstream checks into it instead of restoring `ci.yml`. Klin's release is `.github/workflows/klin-release.yml`; keep `release.yml` and `release-desktop.yml` deleted and port upstream build changes for the Windows installer or the Linux server archive into it.
+
+Klin installs next to T3 Code on the same machines, so it never shares T3 Code's name, app ID, home folder (`~/.klin`, not `~/.t3`), port, URL scheme, systemd units, or release feed. Those values live in `packages/shared/src/appIdentity.ts`. When an upstream merge adds a literal such as `".t3"`, `3773`, `t3code://`, `com.t3tools.t3code`, `t3code.service`, or `pingdotgg/t3code` releases, import it from that module instead.
 
 You can think of T3 Code as an open source "bring-your-own-subscription" alternative to apps like Claude Desktop, Codex App, Cursor Glass and Conductor.
 
