@@ -78,7 +78,7 @@ export function SettingsScopeSentence() {
     onChange: scope.selectScope,
   };
   return (
-    <p className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 px-3 text-sm text-muted-foreground sm:px-4">
+    <p className="sticky top-0 z-10 -mt-6 -mb-3 flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 bg-background px-3 pt-6 pb-3 text-sm text-muted-foreground sm:px-4">
       {SETTINGS_ENVIRONMENT_ONLY_PATHS.has(pathname) ? (
         <span className="shrink-0">Applying settings</span>
       ) : (
@@ -147,7 +147,7 @@ function ScopeMenu({
     <Trigger
       aria-label={`${ariaLabel}: ${label}`}
       render={<Button variant="outline" size="sm" />}
-      className="min-w-0 max-w-72"
+      className="min-w-0 max-w-72 shrink"
     >
       {icon}
       <span className="min-w-0 truncate">{label}</span>
