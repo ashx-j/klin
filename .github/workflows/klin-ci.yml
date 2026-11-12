@@ -1,0 +1,118 @@
+# Klin's CI. It replaces upstream T3 Code's ci.yml, which runs on paid Blacksmith runners
+# and uses T3's private task cache. This runs the same checks on GitHub's free runners.
+# When merging upstream, keep ci.yml deleted and copy any new checks here instead.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  # Formatting and lint for every file.
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup-ci-deps
+      - name: Check
+        run: vp check
+
+  typecheck:
+    name: Typecheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup-ci-deps
+        with:
+          save-pnpm-store: "false"
+      - name: Ensure Electron runtime is installed
+        run: vp run --filter @t3tools/desktop ensure:electron
+      - name: Typecheck
+        run: vp run typecheck
+
+  # Builds the desktop app and boots the built web client in Chromium.
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install browser secret helper build libraries
+        run: sudo apt-get update && sudo apt-get install -y libsecret-1-dev pkg-config
+      - uses: ./.github/actions/setup-ci-deps
+        with:
+          save-pnpm-store: "false"
+      - name: Ensure Electron runtime is installed
+        run: vp run --filter @t3tools/desktop ensure:electron
+      - name: Build desktop pipeline
+        run: vp run build:desktop
+      - name: Verify preload bundle output
+        run: node apps/desktop/scripts/verify-preload-bundle.mjs
+      - name: Install Chromium
+        run: node apps/web/node_modules/playwright/cli.js install --with-deps --only-shell chromium
+      - name: Boot the built web client
+        run: node apps/web/scripts/verify-built-boot.ts
+
+  # Every package except the server and web app, which have their own jobs below.
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      # The desktop tests compile the browser secret helper.
+      - name: Install browser secret helper build libraries
+        run: sudo apt-get update && sudo apt-get install -y libsecret-1-dev pkg-config
+      - uses: ./.github/actions/setup-ci-deps
+        with:
+          save-pnpm-store: "false"
+      - name: Ensure Electron runtime is installed
+        run: vp run --filter @t3tools/desktop ensure:electron
+      - name: Test
+        run: vp run --parallel --filter '!t3' --filter '!@t3tools/monorepo' --filter '!@t3tools/web' test
+
+  test_web:
+    name: Test Web
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup-ci-deps
+        with:
+          save-pnpm-store: "false"
+      - name: Install Chromium for browser tests
+        run: node apps/web/node_modules/playwright/cli.js install --with-deps --only-shell chromium
+      - name: Test
+        run: vp run --filter @t3tools/web test
+
+  # Server test files run one at a time, so the suite is split across 4 runners.
+  test_server:
+    name: Test Server ${{ matrix.shard }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup-ci-deps
+        with:
+          save-pnpm-store: "false"
+      - name: Install Chromium for server browser tests
+        run: node apps/server/node_modules/playwright-core/cli.js install --with-deps --only-shell chromium
+      - name: Test
+        working-directory: apps/server
+        run: vp test run --shard ${{ matrix.shard }}/${{ strategy.job-total }}

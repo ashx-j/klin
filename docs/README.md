@@ -34,8 +34,7 @@
 
 ## Working on T3 Code
 
-Start with the [development runbook](./operations/development.md) and
-[contribution policy](../CONTRIBUTING.md).
+Start with the [development runbook](./operations/development.md).
 
 Internal notes preserve architectural decisions, constraints, and implementation traps that the
 source alone does not explain. Most code changes do not need an internal documentation update. Follow the
@@ -55,9 +54,6 @@ source alone does not explain. Most code changes do not need an internal documen
 - [Environment auth](./internals/environment-auth.md)
 - [T3 Connect](./internals/t3-connect.md)
 - [Assistant citations](./internals/assistant-citations.md)
-- [Mobile layout](./internals/mobile-layout.md)
-- [Mobile navigation](./internals/mobile-navigation.md)
-- [Mobile development lifecycle](./internals/mobile-development.md)
 - [Terminal runtime](./internals/terminal-runtime.md)
 - [Devices](./internals/devices.md)
 - [Voice input](./internals/voice-input.md)
@@ -67,7 +63,5 @@ source alone does not explain. Most code changes do not need an internal documen
 - [Development and local builds](./operations/development.md)
 - [Scenarios: real-app proof for a fix](./operations/scenarios.md)
 - [T3 Connect setup](./operations/connect-setup.md)
-- [Release](./operations/release.md)
 - [Observability](./operations/observability.md)
 - [Relay observability](./operations/relay-observability.md)
-- [Mobile app store screenshots](./operations/mobile-app-store-screenshots.md)
