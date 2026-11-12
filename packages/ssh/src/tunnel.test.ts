@@ -724,9 +724,16 @@ describe("ssh tunnel scripts", () => {
         const serverScript = path.join(home, "fake-t3.cjs");
         yield* fs.writeFileString(serverScript, fakeT3Serve(publishDelayMs));
         // A launch that died holding the lock must not block or double-admit later ones.
-        const launchLock = path.join(home, ".t3", "ssh-launch", ".launch.lock");
+        const launchLock = path.join(home, ".klin", "ssh-launch", ".launch.lock");
         yield* fs.makeDirectory(path.dirname(launchLock), { recursive: true });
         yield* fs.writeFileString(launchLock, "999999999\n");
+        // A live T3 Code server on the same host is not Klin's to adopt, and its home is not Klin's to write.
+        const t3Runtime = path.join(home, ".t3", "userdata", "server-runtime.json");
+        yield* fs.makeDirectory(path.dirname(t3Runtime), { recursive: true });
+        yield* fs.writeFileString(
+          t3Runtime,
+          `{"pid":${process.pid},"port":1,"origin":"http://127.0.0.1:1"}`,
+        );
         const targets = [
           { alias: "devbox", hostname: "devbox", username: null, port: null },
           { alias: "devbox-tailnet", hostname: "devbox-tailnet", username: null, port: null },
@@ -742,7 +749,7 @@ describe("ssh tunnel scripts", () => {
         ).pipe(Effect.provide(localRemoteShellLayer(home)));
 
         const ownerPid = Number(
-          yield* fs.readFileString(path.join(home, ".t3", "userdata", "server.lock")),
+          yield* fs.readFileString(path.join(home, ".klin", "userdata", "server.lock")),
         );
         assert.sameMembers(
           launches.map((launch) => launch.remoteServerKind),
@@ -756,7 +763,7 @@ describe("ssh tunnel scripts", () => {
           if (launch.remoteServerKind !== "managed") continue;
           const stateKey = yield* remoteStateKey(targets[index]!);
           const recordedPid = yield* fs.readFileString(
-            path.join(home, ".t3", "ssh-launch", stateKey, "pid"),
+            path.join(home, ".klin", "ssh-launch", stateKey, "pid"),
           );
           assert.equal(
             Number(recordedPid.trim()),
@@ -765,6 +772,11 @@ describe("ssh tunnel scripts", () => {
           );
         }
         assert.isFalse(yield* fs.exists(launchLock));
+        assert.notEqual(launches[0]!.remotePort, 3773);
+        assert.sameMembers(yield* fs.readDirectory(path.join(home, ".t3"), { recursive: true }), [
+          "userdata",
+          path.join("userdata", "server-runtime.json"),
+        ]);
       }).pipe(Effect.scoped),
     ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );

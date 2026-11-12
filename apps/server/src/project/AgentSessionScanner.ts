@@ -26,6 +26,7 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
+import { APP_HOME_DIR_NAME } from "@t3tools/shared/appIdentity";
 import { isBareGitConfig, parseOriginUrlFromGitConfig } from "@t3tools/shared/git";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { normalizeProjectPathForComparison } from "@t3tools/shared/path";
@@ -700,6 +701,8 @@ function isT3ManagedWorktree(
   const normalized = normalizeForWorktreeMatch(candidatePath, caseFold);
   return (
     normalized.startsWith(normalizeForWorktreeMatch(worktreesDir, caseFold)) ||
+    normalized.includes(`/${APP_HOME_DIR_NAME}/worktrees/`) ||
+    // T3 Code's worktrees hold its own threads' sessions, which are not standalone sessions either.
     normalized.includes("/.t3/worktrees/")
   );
 }

@@ -1,5 +1,7 @@
 import { sha256 } from "@noble/hashes/sha2";
 
+import { APP_SLUG } from "./appIdentity.ts";
+
 export interface DesktopAppControlAddress {
   readonly address: string;
   readonly directory: string | null;
@@ -22,7 +24,7 @@ export function resolveDesktopAppControlAddress(input: {
   const stateHash = shortHash(input.stateDir);
   if (input.platform === "win32") {
     return {
-      address: `\\\\.\\pipe\\t3code-app-${stateHash}`,
+      address: `\\\\.\\pipe\\${APP_SLUG}-app-${stateHash}`,
       directory: null,
     };
   }
@@ -31,9 +33,9 @@ export function resolveDesktopAppControlAddress(input: {
     input.userId === undefined ? shortHash(input.stateDir).slice(0, 12) : input.userId;
   const socketName = `${stateHash}.sock`;
   const maxPathBytes = input.platform === "linux" ? 107 : 103;
-  let directory = input.joinPath(input.tempDir, `t3code-${userKey}`);
+  let directory = input.joinPath(input.tempDir, `${APP_SLUG}-${userKey}`);
   if (new TextEncoder().encode(input.joinPath(directory, socketName)).byteLength > maxPathBytes) {
-    directory = input.joinPath("/tmp", `t3code-${userKey}`);
+    directory = input.joinPath("/tmp", `${APP_SLUG}-${userKey}`);
   }
   return {
     address: input.joinPath(directory, socketName),

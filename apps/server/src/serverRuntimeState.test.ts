@@ -75,11 +75,11 @@ const startBesideBootService = Effect.fn("test.startBesideBootService")(function
   const [unitPath, unit] =
     input.platform === "darwin"
       ? [
-          path.join(root, "Library", "LaunchAgents", "com.t3tools.t3code.service.plist"),
+          path.join(root, "Library", "LaunchAgents", "com.ashx.klin.service.plist"),
           renderBootServicePlist(plan, { homeDir: root, environmentPath: "" }),
         ]
       : [
-          path.join(root, ".config", "systemd", "user", "t3code.service"),
+          path.join(root, ".config", "systemd", "user", "klin.service"),
           renderBootServiceUnit(plan),
         ];
   yield* fs.makeDirectory(path.dirname(unitPath), { recursive: true });
@@ -339,7 +339,7 @@ describe("server ownership", () => {
               "launchctl print": { code: 113 },
               "launchctl print-disabled": {
                 code: 0,
-                stdout: '"com.t3tools.t3code.service" => false',
+                stdout: '"com.ashx.klin.service" => false',
               },
             },
           },
@@ -452,7 +452,7 @@ describe("server ownership", () => {
               "launchctl print": { code: 113 },
               "launchctl print-disabled": {
                 code: 0,
-                stdout: '"com.t3tools.t3code.service" => disabled',
+                stdout: '"com.ashx.klin.service" => disabled',
               },
             },
           },

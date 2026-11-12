@@ -3,6 +3,7 @@ import { isElectron, isSecretsFeatureEnabled } from "~/env";
 import { isMacPlatform, isWindowsPlatform, normalizeSearchText } from "~/lib/utils";
 import { STATIC_KEYBINDING_COMMANDS, type KeybindingCommand } from "@t3tools/contracts";
 import type { EnvironmentId } from "@t3tools/contracts";
+import { CLI_COMMAND_NAME } from "@t3tools/shared/appIdentity";
 import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import {
   sourceControlClients,
@@ -863,7 +864,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "cli-command",
-    title: "t3 command",
+    title: `${CLI_COMMAND_NAME} command`,
     to: "/settings/about",
     searchTerms: ["cli terminal shell path install command line"],
     desktopOnly: true,
