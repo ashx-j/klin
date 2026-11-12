@@ -1898,6 +1898,15 @@ code {
   margin: 0.65rem 0;
 }
 
+/* codex uses bold summaries as progress labels inside reasoning traces. */
+.chat-markdown-reasoning strong {
+  font-weight: inherit;
+}
+
+.chat-markdown-reasoning p {
+  margin: 0.25rem 0;
+}
+
 .chat-markdown-math-display .katex-display {
   margin: 0;
 }
