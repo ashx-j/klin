@@ -204,11 +204,13 @@ jobs:
           Remove-Item Env:ELECTRON_RUN_AS_NODE
 
           # The desktop app itself: its own profile, home folder and port.
-          $stdout = Join-Path $env:RUNNER_TEMP 'klin-stdout.txt'
-          $stderr = Join-Path $env:RUNNER_TEMP 'klin-stderr.txt'
-          $env:ELECTRON_ENABLE_LOGGING = '1'
-          $app = Start-Process -FilePath $exe -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
-          Remove-Item Env:ELECTRON_ENABLE_LOGGING
+          $diag = Join-Path $env:RUNNER_TEMP 'klin-diagnostics'
+          New-Item -ItemType Directory -Force $diag | Out-Null
+          $stdout = Join-Path $diag 'stdout.txt'
+          $stderr = Join-Path $diag 'stderr.txt'
+          $chromium = Join-Path $diag 'chromium.log'
+          $app = Start-Process -FilePath $exe -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr `
+            -ArgumentList "--enable-logging=file", "--log-file=`"$chromium`""
           $deadline = (Get-Date).AddSeconds(150)
           $ready = $false
           while ((Get-Date) -lt $deadline -and -not $ready) {
@@ -226,14 +228,24 @@ jobs:
             Where-Object { $_.OwningProcess -in $klin.Id } |
             ForEach-Object { Write-Host "$($_.LocalAddress):$($_.LocalPort) pid $($_.OwningProcess)" }
           Write-Host '--- Klin files'
+          foreach ($root in @("$env:USERPROFILE\.klin", "$env:APPDATA\klin", "$env:APPDATA\Klin", "$env:TEMP\klin")) {
+            Write-Host "$root exists: $(Test-Path $root)"
+          }
           Get-ChildItem "$env:USERPROFILE\.klin", "$env:APPDATA\klin" -Recurse -Depth 2 -ErrorAction SilentlyContinue |
             Select-Object -First 80 | ForEach-Object { Write-Host $_.FullName }
           Get-ChildItem "$env:USERPROFILE\.klin\userdata\logs" -File -ErrorAction SilentlyContinue |
             ForEach-Object { Write-Host "--- $($_.Name)"; Get-Content $_.FullName -Tail 60 | ForEach-Object { Write-Host $_ } }
-          foreach ($stream in @($stdout, $stderr)) {
+          foreach ($stream in @($stdout, $stderr, $chromium)) {
             Write-Host "--- $stream"
             Get-Content $stream -Tail 80 -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_ }
           }
+          try {
+            Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+            $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+            $bitmap = New-Object System.Drawing.Bitmap $bounds.Width, $bounds.Height
+            [System.Drawing.Graphics]::FromImage($bitmap).CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size)
+            $bitmap.Save((Join-Path $diag 'screen.png'))
+          } catch { Write-Host "No screenshot: $($_.Exception.Message)" }
           $klin | Stop-Process -Force -ErrorAction SilentlyContinue
           if (-not $ready) { Fail 'The desktop app did not answer on 127.0.0.1:4773 within 150 seconds' }
           foreach ($own in @("$env:USERPROFILE\.klin\userdata", "$env:APPDATA\klin")) {
@@ -248,6 +260,40 @@ jobs:
           Start-Sleep -Seconds 5
           if (Test-Path $exe) { Fail 'Klin.exe is still installed after uninstall' }
           Write-Host 'Klin installed, ran, and uninstalled cleanly.'
+
+      - name: Upload Windows diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-diagnostics
+          path: ${{ runner.temp }}/klin-diagnostics
+          if-no-files-found: ignore
+
+  control-t3:
+    name: TEMP control launch of T3 Code
+    runs-on: windows-latest
+    timeout-minutes: 10
+    continue-on-error: true
+    steps:
+      - name: Launch T3 Code 0.1.9
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download v0.1.9 --repo pingdotgg/t3code --pattern 'T3-Code-0.1.9-x64.exe' --dir t3
+          Start-Process -Wait -FilePath (Resolve-Path t3\T3-Code-0.1.9-x64.exe) -ArgumentList '/S'
+          $exe = Get-ChildItem "$env:LOCALAPPDATA\Programs" -Recurse -Filter '*.exe' -Depth 1 | Where-Object { $_.Name -like 'T3 Code*' } | Select-Object -First 1
+          Write-Host "Launching $($exe.FullName)"
+          $null = Start-Process -FilePath $exe.FullName -PassThru
+          $ready = $false
+          $deadline = (Get-Date).AddSeconds(150)
+          while ((Get-Date) -lt $deadline -and -not $ready) {
+            Start-Sleep -Seconds 2
+            try { $null = Invoke-WebRequest -UseBasicParsing -SkipHttpErrorCheck -TimeoutSec 2 http://127.0.0.1:3773/; $ready = $true } catch {}
+          }
+          $procs = @(Get-Process | Where-Object { $_.Path -like "$($exe.DirectoryName)\*" })
+          Write-Host "T3 Code processes: $($procs.Count), answered on 3773: $ready"
+          Write-Host "~/.t3 exists: $(Test-Path "$env:USERPROFILE\.t3")"
 
   publish:
     name: Publish release
