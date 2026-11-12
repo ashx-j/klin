@@ -5,7 +5,7 @@
 #
 # This replaces upstream T3 Code's release.yml and release-desktop.yml, which need T3's paid
 # runners, signing secrets and T3 Connect config. It keeps their build steps for these two targets.
-# Pull requests that touch the release build run everything except the publish.
+# Pull requests that touch the release build or the desktop app run everything except the publish.
 name: Release
 
 on:
@@ -21,8 +21,7 @@ on:
       - scripts/build-cli-archive.ts
       - scripts/build-desktop-artifact.ts
       - scripts/smoke-cli-archive.ts
-      - apps/desktop/package.json
-      - apps/desktop/resources/installer.nsh
+      - apps/desktop/**
   workflow_dispatch:
 
 # One release at a time, so the newest main build is always the one marked latest.
@@ -228,7 +227,7 @@ jobs:
             Where-Object { $_.OwningProcess -in $klin.Id } |
             ForEach-Object { Write-Host "$($_.LocalAddress):$($_.LocalPort) pid $($_.OwningProcess)" }
           Write-Host '--- Klin files'
-          foreach ($root in @("$env:USERPROFILE\.klin", "$env:APPDATA\klin", "$env:APPDATA\Klin", "$env:TEMP\klin")) {
+          foreach ($root in @("$env:USERPROFILE\.klin", "$env:APPDATA\klin", "$env:TEMP\klin")) {
             Write-Host "$root exists: $(Test-Path $root)"
           }
           Get-ChildItem "$env:USERPROFILE\.klin", "$env:APPDATA\klin" -Recurse -Depth 2 -ErrorAction SilentlyContinue |
@@ -268,32 +267,6 @@ jobs:
           name: windows-diagnostics
           path: ${{ runner.temp }}/klin-diagnostics
           if-no-files-found: ignore
-
-  control-t3:
-    name: TEMP control launch of T3 Code
-    runs-on: windows-latest
-    timeout-minutes: 10
-    continue-on-error: true
-    steps:
-      - name: Launch T3 Code 0.1.9
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release download v0.1.9 --repo pingdotgg/t3code --pattern 'T3-Code-0.1.9-x64.exe' --dir t3
-          Start-Process -Wait -FilePath (Resolve-Path t3\T3-Code-0.1.9-x64.exe) -ArgumentList '/S'
-          $exe = Get-ChildItem "$env:LOCALAPPDATA\Programs" -Recurse -Filter '*.exe' -Depth 1 | Where-Object { $_.Name -like 'T3 Code*' } | Select-Object -First 1
-          Write-Host "Launching $($exe.FullName)"
-          $null = Start-Process -FilePath $exe.FullName -PassThru
-          $ready = $false
-          $deadline = (Get-Date).AddSeconds(150)
-          while ((Get-Date) -lt $deadline -and -not $ready) {
-            Start-Sleep -Seconds 2
-            try { $null = Invoke-WebRequest -UseBasicParsing -SkipHttpErrorCheck -TimeoutSec 2 http://127.0.0.1:3773/; $ready = $true } catch {}
-          }
-          $procs = @(Get-Process | Where-Object { $_.Path -like "$($exe.DirectoryName)\*" })
-          Write-Host "T3 Code processes: $($procs.Count), answered on 3773: $ready"
-          Write-Host "~/.t3 exists: $(Test-Path "$env:USERPROFILE\.t3")"
 
   publish:
     name: Publish release
