@@ -66,6 +66,8 @@ jobs:
         run: node apps/web/scripts/verify-built-boot.ts
 
   # Every package except the server and web app, which have their own jobs below.
+  # GitHub's runners have 4 vCPUs. Running more than 2 packages at once starves the tests
+  # that spawn many processes, such as provider-acp's terminal tests, past their timeout.
   test:
     name: Test
     runs-on: ubuntu-latest
@@ -81,7 +83,7 @@ jobs:
       - name: Ensure Electron runtime is installed
         run: vp run --filter @t3tools/desktop ensure:electron
       - name: Test
-        run: vp run --parallel --filter '!t3' --filter '!@t3tools/monorepo' --filter '!@t3tools/web' test
+        run: vp run --parallel --concurrency-limit 2 --filter '!t3' --filter '!@t3tools/monorepo' --filter '!@t3tools/web' test
 
   test_web:
     name: Test Web
