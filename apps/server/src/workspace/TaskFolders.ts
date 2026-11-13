@@ -239,6 +239,7 @@ const make = Effect.gen(function* () {
   const store = yield* TaskFolderStore.TaskFolderStore;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
 
+  const realLocation = TaskFolderStore.makeRealLocation(fileSystem, path);
   const exists = (target: string) =>
     fileSystem.exists(target).pipe(Effect.orElseSucceed(() => false));
   const isRepository = (folder: string) => exists(path.join(folder, ".git"));
@@ -915,9 +916,14 @@ const make = Effect.gen(function* () {
     "TaskFolders.removeIfTaskFolder",
   )(function* (input) {
     const taskFolder = yield* store.findContaining(input.path);
-    const target = path.resolve(input.path);
-    if (taskFolder === null || (target !== taskFolder.root && target !== taskFolder.projectPath))
-      return false;
+    if (taskFolder === null) return false;
+    // The record may hold the other spelling of a worktrees folder reached through a symlink.
+    const [target, root, projectPath] = yield* Effect.all([
+      realLocation(path.resolve(input.path)),
+      realLocation(taskFolder.root),
+      realLocation(taskFolder.projectPath),
+    ]);
+    if (target !== root && target !== projectPath) return false;
     const { kept } = yield* removeLocked(taskFolder, { force: input.force, forget: true });
     if (kept.length > 0) {
       return yield* new TaskFolderError({

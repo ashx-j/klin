@@ -34,15 +34,8 @@ const TaskFolderRow = Schema.Struct({
   repositories: Schema.fromJsonString(Schema.Array(TaskFolderRepository)),
 });
 
-const make = Effect.gen(function* () {
-  const sql = yield* SqlClient.SqlClient;
-  const fileSystem = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-
-  const failed = (cause: unknown) =>
-    new TaskFolderError({ operation: "read", detail: "Could not read task folders.", cause });
-
-  // What Git and sandboxes resolve a path to: the nearest real ancestor plus what is missing.
+/** What Git and sandboxes resolve a path to: the nearest real ancestor plus what is missing. */
+export const makeRealLocation = (fileSystem: FileSystem.FileSystem, path: Path.Path) => {
   const realLocation = (target: string): Effect.Effect<string> =>
     fileSystem.realPath(target).pipe(
       Effect.catch(() => {
@@ -52,6 +45,17 @@ const make = Effect.gen(function* () {
           : Effect.map(realLocation(parent), (real) => path.join(real, path.basename(target)));
       }),
     );
+  return realLocation;
+};
+
+const make = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const realLocation = makeRealLocation(fileSystem, path);
+
+  const failed = (cause: unknown) =>
+    new TaskFolderError({ operation: "read", detail: "Could not read task folders.", cause });
 
   const ancestors = (target: string) => {
     const result = [target];

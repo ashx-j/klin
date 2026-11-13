@@ -704,9 +704,16 @@ it.live("keeps a repository git will not remove and removes the rest", () =>
         [api],
       );
 
-      const second = yield* taskFolders.remove({ root, force: true, forget: true });
+      // Asked for through a symlink to the worktrees folder: the same task folder.
+      const linked = path.join(tmp, "worktrees-link");
+      yield* fileSystem.symlink(path.dirname(root), linked);
+      assert.isTrue(
+        yield* taskFolders.removeIfTaskFolder({
+          path: path.join(linked, path.basename(root)),
+          force: true,
+        }),
+      );
 
-      assert.deepEqual(second.kept, []);
       assert.isFalse(yield* fileSystem.exists(root));
       assert.isNull(yield* taskFolders.find(root));
       assert.equal(yield* worktreeCount(api), 1);
