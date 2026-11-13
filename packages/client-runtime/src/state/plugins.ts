@@ -41,6 +41,20 @@ export function createPluginEnvironmentAtoms<R, E>(
       label: "environment-data:plugins:create-upload-url",
       tag: WS_METHODS.pluginsCreateUploadUrl,
     }),
+    // Plugin sharing: a client connected to several of the user's machines copies plugins between
+    // them; see apps/web/src/plugins/pluginFleetSync.ts.
+    createPluginDownloadUrl: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:plugins:create-download-url",
+      tag: WS_METHODS.pluginsCreateDownloadUrl,
+    }),
+    applyPluginFleet: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:plugins:fleet-apply",
+      tag: WS_METHODS.pluginsFleetApply,
+    }),
+    setPluginSharing: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:plugins:fleet-set-sharing",
+      tag: WS_METHODS.pluginsFleetSetSharing,
+    }),
     rescanPlugins: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:plugins:rescan",
       tag: WS_METHODS.pluginsRescan,

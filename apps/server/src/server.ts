@@ -834,6 +834,7 @@ const layerMakeRoutes = Layer.mergeAll(
     GuestHttp.layer,
     PluginHost.layerWebFilesRoute,
     PluginUploads.layerRoute,
+    PluginUploads.layerDownloadRoute,
     DeviceHubProxy.layer,
     ServerBrowserStream.routeLayer,
     ServerHttp.layerStaticAndDevRoute,

@@ -66,6 +66,45 @@ export interface PluginLogger {
 }
 
 /**
+ * One orchestration event as the environment stored it. Its payload is T3's own format, which
+ * changes between releases, so a plugin that keeps events should keep the JSON text as it is.
+ */
+export interface PluginStoredEvent {
+  /** Grows with every event this environment stores and is never reused there. */
+  readonly sequence: number;
+  readonly id: string;
+  /** Such as `turn-item.updated` or `project.created`. */
+  readonly type: string;
+  /** `thread` or `project`. */
+  readonly aggregate: string;
+  /** The id of the thread or project the event belongs to. */
+  readonly streamId: string;
+  /** An ISO 8601 time. */
+  readonly occurredAt: string;
+  readonly commandId: string | null;
+  /**
+   * The payload as JSON text. Tool output in it is what the agent saw: Claude Code cuts most tool
+   * output at about 30,000 characters before the agent reads it, and T3 cuts a file change's diff
+   * at 32 KB.
+   */
+  readonly payloadJson: string;
+  /** The metadata as JSON text, such as the run, the provider and the node. */
+  readonly metadataJson: string;
+}
+
+export interface PluginStoredEventBatch {
+  /** The next stored events in sequence order. Empty only when `missed` is set. */
+  readonly events: ReadonlyArray<PluginStoredEvent>;
+  /**
+   * Set when T3 may have deleted events after `afterSequence`, through `throughSequence`, before
+   * the feed read them. T3 keeps a stored event for about a day once its threads show it, and
+   * keeps some older ones, such as each thread's newest event, longer, so the events in that range
+   * that are still stored still arrive.
+   */
+  readonly missed?: { readonly afterSequence: number; readonly throughSequence: number };
+}
+
+/**
  * What `activate` receives. Everything is scoped to one activation and released on deactivate.
  * `Rpc` types the methods and channels the web half calls.
  */
@@ -79,6 +118,16 @@ export interface PluginApi<Rpc extends PluginRpcMap = PluginRpcMap> {
   readonly version: number;
   readonly id: string;
   readonly rootDir: string;
+  /**
+   * The environment's id, which stays the same across restarts and updates. Added in version 2.
+   */
+  readonly environmentId: string;
+  /**
+   * A folder for the plugin's own files, such as a database. T3 creates it before `activate`, keeps
+   * it across updates, and deletes it with the plugin's settings and storage when the plugin is
+   * removed. Added in version 2.
+   */
+  readonly dataDir: string;
   readonly log: PluginLogger;
   readonly settings: {
     /**
@@ -123,6 +172,27 @@ export interface PluginApi<Rpc extends PluginRpcMap = PluginRpcMap> {
      * lists, and a call to it fails as an unknown tool.
      */
     readonly registerTool: (tool: PluginMcpTool, handler: PluginMcpToolHandler) => void;
+  };
+  /** The environment's stored orchestration events, read only. Added in version 2. */
+  readonly events: {
+    /**
+     * Yields stored events after `afterSequence` in batches, then new ones as they are stored,
+     * until `signal` aborts, the loop stops or the plugin deactivates. It reads a batch only when
+     * the loop asks, so a slow plugin falls behind without holding up T3. Save the last sequence
+     * you handled and pass it after a restart.
+     */
+    readonly stored: (options?: {
+      /** Starts after this sequence. Without it, the feed starts with the next event stored. */
+      readonly afterSequence?: number;
+      /** Only events of these types. */
+      readonly types?: ReadonlyArray<string>;
+      /**
+       * At most this many events per batch, from 1 to 500, 100 by default. A batch also stops at
+       * about 4 MB of JSON text.
+       */
+      readonly batchSize?: number;
+      readonly signal?: AbortSignal;
+    }) => AsyncIterable<PluginStoredEventBatch>;
   };
 }
 

@@ -1,6 +1,6 @@
 import * as Schema from "effect/Schema";
 
-import { ForwardCompatibleArray, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { ForwardCompatibleArray, NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 // Lowercase because the id names the plugin's directory on case-insensitive filesystems. No
 // underscores, so the `plg_<id>_` prefix on plugin MCP tool names belongs to exactly one plugin.
@@ -157,12 +157,76 @@ export type PluginRpcName = typeof PluginRpcName.Type;
 export const PluginListInput = Schema.Struct({});
 export type PluginListInput = typeof PluginListInput.Type;
 
+/** SHA-256 of a plugin folder's files as lowercase hex, which names its contents on every machine. */
+export const PluginFilesRevision = Schema.String.check(
+  Schema.isPattern(/^[0-9a-f]{64}$/, { expected: "a SHA-256 hash in lowercase hex" }),
+);
+export type PluginFilesRevision = typeof PluginFilesRevision.Type;
+
+/**
+ * The newest change to one plugin that a machine knows of, which clients copy to the user's other
+ * machines. The files (install, update, removal) and the switch are two separate values, and on
+ * each the later time wins, so an update made on one machine and a switch flipped on another both
+ * survive.
+ */
+export const PluginFleetEntry = Schema.Struct({
+  pluginId: PluginId,
+  /** The files' revision, or null once the plugin was removed. */
+  revision: Schema.NullOr(PluginFilesRevision),
+  /** The manifest version of those files, for display. */
+  version: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(64))),
+  /** Milliseconds since the epoch, on the clock of the machine that made the change. */
+  filesAt: NonNegativeInt,
+  enabled: Schema.Boolean,
+  enabledAt: NonNegativeInt,
+});
+export type PluginFleetEntry = typeof PluginFleetEntry.Type;
+
+/** What a machine shares with the user's other machines. Only clients that manage plugins get it. */
+export const PluginFleet = Schema.Struct({
+  /** False when the user left this machine out of plugin sharing. */
+  sharing: Schema.Boolean,
+  /** One per plugin this machine has, or removed since it shared. */
+  entries: ForwardCompatibleArray(PluginFleetEntry),
+});
+export type PluginFleet = typeof PluginFleet.Type;
+
 // A row a newer server sends with a status or failure stage this client doesn't know is dropped,
 // so the rest of the list still shows.
 export const PluginListResult = Schema.Struct({
   plugins: ForwardCompatibleArray(PluginState),
+  fleet: Schema.optionalKey(PluginFleet),
 });
 export type PluginListResult = typeof PluginListResult.Type;
+
+/**
+ * Brings this machine to `entry` where it is newer than what the machine has: turns the plugin on
+ * or off, or removes it. Newer files come through an upload instead, which carries the entry.
+ */
+export const PluginFleetApplyInput = Schema.Struct({ entry: PluginFleetEntry });
+export type PluginFleetApplyInput = typeof PluginFleetApplyInput.Type;
+
+/** `applied` is false when the machine already had the entry or something newer. */
+export const PluginFleetApplyResult = Schema.Struct({ applied: Schema.Boolean });
+export type PluginFleetApplyResult = typeof PluginFleetApplyResult.Type;
+
+export const PluginFleetSetSharingInput = Schema.Struct({ sharing: Schema.Boolean });
+export type PluginFleetSetSharingInput = typeof PluginFleetSetSharingInput.Type;
+
+export const PluginCreateDownloadUrlInput = Schema.Struct({ pluginId: PluginId });
+export type PluginCreateDownloadUrlInput = typeof PluginCreateDownloadUrlInput.Type;
+
+/**
+ * A signed URL, relative to the environment, that answers with the plugin's files as multipart
+ * form data in the upload's format: a `file` part per file, named with its path through
+ * `encodeURIComponent`. `revision` names those files.
+ */
+export const PluginCreateDownloadUrlResult = Schema.Struct({
+  relativeUrl: TrimmedNonEmptyString.check(Schema.isMaxLength(4096)),
+  expiresAt: Schema.Number,
+  revision: PluginFilesRevision,
+});
+export type PluginCreateDownloadUrlResult = typeof PluginCreateDownloadUrlResult.Type;
 
 export const PluginSetEnabledInput = Schema.Struct({
   pluginId: PluginId,
@@ -200,7 +264,8 @@ export type PluginCreateUploadUrlInput = typeof PluginCreateUploadUrlInput.Type;
 
 /**
  * A signed URL, relative to the environment, that takes one plugin folder as multipart form data:
- * a `file` part per file, named with its path through `encodeURIComponent`. It answers with a
+ * a `file` part per file, named with its path through `encodeURIComponent`, and an optional `fleet`
+ * field with a `PluginFleetEntry` as JSON for a copy from another machine. It answers with a
  * `PluginMutationResult`, or a status and the reason as text.
  */
 export const PluginCreateUploadUrlResult = Schema.Struct({

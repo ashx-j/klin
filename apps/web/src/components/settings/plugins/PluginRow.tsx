@@ -3,6 +3,7 @@ import type { EnvironmentId, PluginState } from "@t3tools/contracts";
 import { ChevronUpIcon, RotateCwIcon, SlidersHorizontalIcon, Trash2Icon } from "lucide-react";
 import { useState } from "react";
 
+import { fleetMachinesAtom } from "../../../plugins/pluginFleet";
 import {
   pluginContributionKey,
   pluginPartNotesAtom,
@@ -16,6 +17,7 @@ import { Collapsible, CollapsiblePanel } from "../../ui/collapsible";
 import { Popover, PopoverClose, PopoverPopup, PopoverTrigger } from "../../ui/popover";
 import { Switch } from "../../ui/switch";
 import { SettingsRow } from "../settingsLayout";
+import { PluginPlacements } from "./PluginFleet";
 import { PluginSettingsRows } from "./PluginSettingsRows";
 
 const FAILURE_STAGES = {
@@ -48,6 +50,9 @@ export function PluginRow({
   const webFailure = useAtomValue(pluginWebFailuresAtom(plugin.id)).get(environmentId);
   const partNotes = useAtomValue(pluginPartNotesAtom(plugin.id)).get(environmentId) ?? [];
   const hasSettings = customSettings !== undefined || plugin.hasSettings;
+  const shared =
+    useAtomValue(fleetMachinesAtom).find((machine) => machine.environmentId === environmentId)
+      ?.status.kind === "sharing";
   const whileBusy = async (action: () => Promise<unknown>) => {
     setBusy(true);
     await action();
@@ -92,6 +97,7 @@ export function PluginRow({
               {note}
             </span>
           ))}
+          <PluginPlacements environmentId={environmentId} plugin={plugin} />
         </>
       }
       status={
@@ -136,6 +142,7 @@ export function PluginRow({
           {duplicate ? null : (
             <RemovePluginPopover
               name={plugin.name}
+              shared={shared}
               unlink={unlink}
               folder={unlink ? folder : undefined}
               disabled={busy || !canManage}
@@ -181,12 +188,15 @@ export function PluginRow({
 /** The remove button and the popup that confirms it, or Unlink for a plugin loaded from a folder. */
 function RemovePluginPopover({
   name,
+  shared,
   unlink,
   folder,
   disabled,
   onRemove,
 }: {
   readonly name: string;
+  /** Whether this machine shares plugins, so the removal reaches the user's other machines. */
+  readonly shared: boolean;
   readonly unlink: boolean;
   /** The folder unlinked, named in the popup. */
   readonly folder: string | undefined;
@@ -216,7 +226,9 @@ function RemovePluginPopover({
             </p>
           )}
           <p className="text-muted-foreground text-xs">
-            This also deletes its settings, secrets and stored data, and can't be undone.
+            {shared
+              ? "It is also removed from every machine that shares plugins, with its settings, secrets and stored data on each. This can't be undone."
+              : "This also deletes its settings, secrets and stored data, and can't be undone."}
           </p>
           <div className="flex justify-end gap-2">
             <PopoverClose render={<Button size="sm" variant="ghost" disabled={disabled} />}>

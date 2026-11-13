@@ -7,6 +7,8 @@ import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 
+import type * as OrchestrationEventStore from "../persistence/OrchestrationEventStore.ts";
+import { makeEventsApi } from "./api/events.ts";
 import { makeFacadeContext, pluginCodeScope, refused } from "./api/facade.ts";
 import { makeMcpApi } from "./api/mcp.ts";
 import type * as PluginMcpTools from "./PluginMcpTools.ts";
@@ -60,6 +62,7 @@ export interface PluginApiServices {
   readonly settings: PluginSettingsStore.PluginSettingsStore["Service"];
   readonly storage: PluginStorage.PluginStorage["Service"];
   readonly mcpTools: PluginMcpTools.PluginMcpTools["Service"];
+  readonly eventStore: OrchestrationEventStore.OrchestrationEventStore["Service"];
 }
 
 /**
@@ -69,6 +72,8 @@ export interface PluginApiServices {
 export const makePluginApi = (input: {
   readonly id: PluginId;
   readonly rootDir: string;
+  readonly environmentId: string;
+  readonly dataDir: string;
   readonly settingsSchema: Schema.JsonObject | undefined;
   readonly activation: PluginActivation;
   readonly context: Context.Context<never>;
@@ -96,9 +101,11 @@ export const makePluginApi = (input: {
   };
 
   return {
-    version: 1,
+    version: 2,
     id,
     rootDir: input.rootDir,
+    environmentId: input.environmentId,
+    dataDir: input.dataDir,
     log: { debug: log("Debug"), info: log("Info"), warn: log("Warn"), error: log("Error") },
     settings: {
       get: () => call(services.settings.get(id, input.settingsSchema)),
@@ -150,5 +157,6 @@ export const makePluginApi = (input: {
       activation.cleanups.push(cleanup);
     },
     mcp: makeMcpApi(facade, services),
+    events: makeEventsApi(facade, services.eventStore),
   };
 };

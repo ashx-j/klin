@@ -69,9 +69,10 @@ the plugin with the reason instead of refusing every save later.
 
 ## State lives beside T3's
 
-`<stateDir>/plugins.json` holds enabled flags, dev paths, the plugins that stopped the server and
-starting marks.
-Settings go in `plugin-data/<id>/` and storage in `plugins.sqlite`. They stay out of
+`<stateDir>/plugins.json` holds enabled flags, dev paths, the plugins that stopped the server,
+starting marks and the sharing ledger (see [Sharing across machines](#sharing-across-machines)).
+Settings go in `plugin-data/<id>/`, a plugin's own files in `plugin-data/<id>/files/` (its
+`dataDir`), and storage in `plugins.sqlite`. They stay out of
 `settings.json`, whose writer drops keys it doesn't know, and out of `statev2.sqlite`, which holds
 T3's event-sourced state: plugin data isn't events, has no schema of T3's, and is deleted with its
 plugin. Settings stay
@@ -153,6 +154,58 @@ Plugin themes arrive over the server config stream after the first paint, so the
 in localStorage for the boot script in `index.html`. The server marks plugin themes, so the client
 can show only those of chosen environments. The desktop main process cannot read localStorage, so
 the page sends it the canvas it paints under a light and a dark native theme.
+
+## Event feed
+
+`events.stored` hands a plugin `orchestration_events` rows read only, as stored, with the prompt a
+row shares with an earlier one put back. Payloads stay JSON text, so the server decodes nothing and
+a plugin that keeps events keeps T3's own format, whatever it becomes. It is pull based: each
+`next()` reads one page from the reader connection, and nothing is buffered between pulls, so a
+slow plugin only falls behind. While caught up, the feed waits on a one-slot queue that a
+subscription to committed events refills, so a burst of commits wakes it once. The subscription
+exists only while a plugin iterates, and deactivation interrupts the stream.
+
+[Projection maintenance](../../apps/server/src/orchestration-v2/ProjectionMaintenance.ts) deletes
+events about a day after the projections cover them, keeping some, such as each stream's newest.
+So a full-history read gets what is left, and a feed that resumes below the pruned-through mark
+reports `missed` once for that range. A plugin that must keep every event has to keep up, which is
+why the session archive copies each machine's events to local disk before shipping them.
+
+## Sharing across machines
+
+Each machine keeps, in `plugins.json`, the newest decision it knows for each plugin: the files
+(revision and time) and the switch (on or off and time), each settled by the later time. Removals
+stay as entries, so a machine carries a removal to machines it meets later. The rules live in
+[`@t3tools/shared/pluginFleet`](../../packages/shared/src/pluginFleet.ts), which the server and
+client share.
+
+The client copies, not the servers. A client managing plugins on two machines already holds a
+session allowed to install code on each, and servers hold no credentials for each other except
+peer links, which are a Labs feature carrying an agent's access, not an owner's. So sharing adds no
+new way for one machine to act on another. The [sync loop](../../apps/web/src/plugins/pluginFleetSync.ts)
+plans from every sharing machine's list, copies files through the signed download and upload
+URLs, and sends switches and removals through `plugins.fleet.apply`. Each server decides under its
+lifecycle lock whether an entry is newer, so two windows syncing at once apply each change once.
+A server only reports entries to sessions that manage plugins, so a guest's server is never a
+source or a target.
+
+An entry only describes files the machine has, or a removal it carried out, so discovery can tell a
+change made on the machine from one waiting to arrive: a folder whose revision differs from its
+entry was changed there. A new folder takes its newest file time, so of two machines that had
+different versions before they shared, the one installed later wins. Local changes take at least the
+entry's time plus one, so a change made after seeing another machine's wins even with skewed clocks.
+A revision hashes paths and bytes with `/` separators and leaves out `.git` and `node_modules`, as
+uploads do, so it is the same on every platform. Discovery caches it by file sizes and times.
+
+A copy that fails to start stays, unlike a manual update that rolls back, because the other
+machines have that version and a rollback would only diverge. The switch from a removed plugin's
+entry is kept for when it comes back.
+
+The trust step moves with it: a plugin still arrives off, and turning it on is a decision for every
+machine. Anything that can write one machine's `plugins/` folder or `plugins.json` can therefore get
+code onto the others once a client connects to both. Plugins are trusted code and an agent with full
+access on a machine can already run anything there, so this is accepted for a single owner's
+machines; the per-machine **Share plugins** switch is the way out.
 
 ## Agent tools
 

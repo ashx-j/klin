@@ -47,7 +47,10 @@ import {
   failEnvironmentInternal,
 } from "./auth/http.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
-import { PLUGIN_UPLOAD_ROUTE_PREFIX } from "./plugins/PluginUploads.ts";
+import {
+  PLUGIN_DOWNLOAD_ROUTE_PREFIX,
+  PLUGIN_UPLOAD_ROUTE_PREFIX,
+} from "./plugins/PluginUploads.ts";
 import { WEBHOOK_ROUTE_PREFIX } from "./scheduledTasks/ScheduledTaskService.ts";
 import {
   browserApiCorsAllowedHeaders,
@@ -399,7 +402,8 @@ const layerUntracedRequests = Layer.succeed(HttpMiddleware.TracerDisabledWhen)((
     path.startsWith(`${WEBHOOK_ROUTE_PREFIX}/`) ||
     path.startsWith(`${ASSET_ROUTE_PREFIX}/`) ||
     path.startsWith(`${ATTACHMENT_UPLOAD_ROUTE_PREFIX}/`) ||
-    path.startsWith(`${PLUGIN_UPLOAD_ROUTE_PREFIX}/`)
+    path.startsWith(`${PLUGIN_UPLOAD_ROUTE_PREFIX}/`) ||
+    path.startsWith(`${PLUGIN_DOWNLOAD_ROUTE_PREFIX}/`)
   );
 });
 

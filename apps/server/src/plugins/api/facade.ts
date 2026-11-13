@@ -52,8 +52,8 @@ export interface FacadeContext {
   readonly call: <A, E>(effect: Effect.Effect<A, E>) => Promise<A>;
   /** Runs an effect in the background for the plugin; failures are logged, not thrown. */
   readonly fork: <A, E>(effect: Effect.Effect<A, E>) => void;
-  /** Exposes a stream as an iterable that ends when the plugin deactivates. */
-  readonly iterate: <A, E>(stream: Stream.Stream<A, E>) => AsyncIterable<A>;
+  /** Exposes a stream as an iterable that ends when the plugin deactivates or `signal` aborts. */
+  readonly iterate: <A, E>(stream: Stream.Stream<A, E>, signal?: AbortSignal) => AsyncIterable<A>;
 }
 
 /**
@@ -146,9 +146,13 @@ export const makeFacadeContext = (input: {
       );
     },
     // The plugin pulls, but each pull runs T3's side of the stream, so it is a call too.
-    iterate: (stream) => {
+    iterate: (stream, signal) => {
+      const ended =
+        signal === undefined
+          ? activation.controller.signal
+          : AbortSignal.any([activation.controller.signal, signal]);
       const iterable = Stream.toAsyncIterableWith(
-        stream.pipe(Stream.interruptWhen(abortEffect(activation.controller.signal))),
+        stream.pipe(Stream.interruptWhen(abortEffect(ended))),
         context,
       );
       return {

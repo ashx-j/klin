@@ -38,6 +38,8 @@ import {
 
 import packageJson from "../../package.json" with { type: "json" };
 import * as ServerConfig from "../config.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as OrchestrationEventStore from "../persistence/OrchestrationEventStore.ts";
 import { authenticateRawRouteWithScope } from "../http.ts";
 import { forkParked } from "../serverActivation.ts";
 import {
@@ -54,7 +56,12 @@ import { makePluginFailures } from "./pluginFailures.ts";
 import { discoverPlugins, type DiscoveredPlugin } from "./pluginDiscovery.ts";
 import * as PluginInstaller from "./PluginInstaller.ts";
 import * as PluginMcpTools from "./PluginMcpTools.ts";
-import { makePluginsConfig, type PluginConfigError } from "./pluginsConfig.ts";
+import { type FoundPlugin, makeRevisionCache, recordLocalChanges } from "./pluginFleet.ts";
+import {
+  makePluginsConfig,
+  type PluginConfigError,
+  type PluginsConfigFile,
+} from "./pluginsConfig.ts";
 import * as PluginSettingsStore from "./PluginSettingsStore.ts";
 import * as PluginStorage from "./PluginStorage.ts";
 import { makePluginStates, manifestOf, type PluginRecord } from "./pluginStates.ts";
@@ -245,7 +252,9 @@ const make = Effect.gen(function* () {
     settings: yield* PluginSettingsStore.PluginSettingsStore,
     storage: yield* PluginStorage.PluginStorage,
     mcpTools: yield* PluginMcpTools.PluginMcpTools,
+    eventStore: yield* OrchestrationEventStore.OrchestrationEventStore,
   };
+  const environment = yield* ServerEnvironment.ServerEnvironment;
   const settingsStore = services.settings;
 
   const pluginsDir = path.join(config.stateDir, "plugins");
@@ -428,10 +437,26 @@ const make = Effect.gen(function* () {
               failure: { stage: "load", message: errorText(Cause.squash(definition.cause)) },
             });
           }
+          // Beside its settings, so removing the plugin deletes it with them.
+          const dataDir = path.join(config.stateDir, "plugin-data", plugin.id, "files");
+          const madeDataDir = yield* fs
+            .makeDirectory(dataDir, { recursive: true })
+            .pipe(Effect.result);
+          if (madeDataDir._tag === "Failure") {
+            return yield* setRecord(plugin.id, {
+              status: "failed",
+              failure: {
+                stage: "activate",
+                message: `Could not create its data folder: ${madeDataDir.failure.message}`,
+              },
+            });
+          }
           const activation = makePluginActivation();
           const api = makePluginApi({
             id: plugin.id,
             rootDir: plugin.rootDir,
+            environmentId: yield* environment.getEnvironmentId,
+            dataDir,
             settingsSchema: manifest.settingsSchema,
             activation,
             context,
@@ -516,6 +541,43 @@ const make = Effect.gen(function* () {
   const startsAtDiscovery = (plugin: DiscoveredPlugin, found: Found) =>
     initialRecord(plugin, found).status === "loading";
 
+  const revisionOf = makeRevisionCache();
+  // A plugin whose files can't be read or are too large to copy is left out of sharing.
+  const recordFleetChanges = Effect.fn("PluginHost.recordFleetChanges")(function* (
+    plugins: ReadonlyArray<DiscoveredPlugin>,
+    complete: boolean,
+  ) {
+    const found = yield* Effect.forEach(plugins, (plugin) => {
+      const manifest = manifestOf(plugin);
+      if (manifest === undefined) return Effect.succeed([]);
+      return revisionOf(plugin.rootDir).pipe(
+        Effect.provideService(FileSystem.FileSystem, fs),
+        Effect.provideService(Path.Path, path),
+        Effect.map((folder): ReadonlyArray<FoundPlugin> => [
+          { pluginId: plugin.id, version: manifest.version, ...folder },
+        ]),
+        Effect.catchTags({
+          PluginFolderUnsharableError: (error) =>
+            Effect.logInfo("plugin left out of sharing", {
+              pluginId: plugin.id,
+              reason: error.reason,
+            }).pipe(Effect.as([])),
+        }),
+      );
+    }).pipe(Effect.map((lists) => lists.flat()));
+    const record = (config: PluginsConfigFile, now: number) =>
+      recordLocalChanges({
+        config,
+        found,
+        present: new Set(plugins.map((plugin) => plugin.id)),
+        complete,
+        now,
+      });
+    const now = yield* Clock.currentTimeMillis;
+    if (record(yield* pluginsConfig.current, now) === undefined) return;
+    yield* pluginsConfig.write((latest) => record(latest, now) ?? latest);
+  });
+
   // Startup tolerates an unreadable plugins.json; an explicit reload reports it instead.
   const discover = Effect.fn("PluginHost.discover")(function* (lenient: boolean) {
     const current = yield* pluginsConfig.reread(lenient);
@@ -526,10 +588,8 @@ const make = Effect.gen(function* () {
       Effect.provideService(FileSystem.FileSystem, fs),
       Effect.provideService(Path.Path, path),
     );
-    // Only folders that are gone: one it could not read, such as on a drive mounted later, would
-    // otherwise come back turned off.
-    if (complete) {
-      yield* pluginsConfig.forgetMissing(new Set(plugins.map((plugin) => plugin.id))).pipe(
+    const tolerated = <A>(effect: Effect.Effect<A, PluginConfigError>) =>
+      effect.pipe(
         Effect.catchTags({
           PluginConfigError: (error) =>
             lenient
@@ -537,7 +597,12 @@ const make = Effect.gen(function* () {
               : Effect.fail(error),
         }),
       );
+    // Only folders that are gone: one it could not read, such as on a drive mounted later, would
+    // otherwise come back turned off.
+    if (complete) {
+      yield* tolerated(pluginsConfig.forgetMissing(new Set(plugins.map((plugin) => plugin.id))));
     }
+    yield* tolerated(recordFleetChanges(plugins, complete));
     const found: Found = { enabled: current.enabled ?? {}, crashed: current.crashed ?? {} };
     return { plugins, found };
   });
@@ -563,7 +628,7 @@ const make = Effect.gen(function* () {
         Effect.gen(function* () {
           const record = yield* findRecord(pluginId);
           if (record === undefined) return yield* new PluginNotFoundError({ pluginId });
-          yield* pluginsConfig.writeEnabled(pluginId, enabled);
+          yield* pluginsConfig.writeEnabled(pluginId, enabled, yield* Clock.currentTimeMillis);
           if ("failure" in record.plugin) return yield* publishStates;
           if (enabled && (record.status === "active" || record.status === "loading")) {
             return yield* publishStates;
@@ -687,6 +752,7 @@ const make = Effect.gen(function* () {
         ),
       ),
     stop: stopPlugin,
+    stateOf,
     rescan: rediscover(undefined).pipe(Effect.asVoid),
     reload,
     config: pluginsConfig.current,

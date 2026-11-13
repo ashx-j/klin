@@ -75,6 +75,10 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.pluginsLink]: AuthSettingsWriteScope,
   [WS_METHODS.pluginsUninstall]: AuthSettingsWriteScope,
   [WS_METHODS.pluginsSettingsUpdate]: AuthSettingsWriteScope,
+  // Copying plugins between machines installs and runs their code, and the files may hold secrets.
+  [WS_METHODS.pluginsCreateDownloadUrl]: AuthSettingsWriteScope,
+  [WS_METHODS.pluginsFleetApply]: AuthSettingsWriteScope,
+  [WS_METHODS.pluginsFleetSetSharing]: AuthSettingsWriteScope,
   [WS_METHODS.scheduledTasksRunNow]: AuthOrchestrationOperateScope,
   [WS_METHODS.scheduledTasksRotateWebhookToken]: AuthOrchestrationOperateScope,
   [ORCHESTRATION_V2_WS_METHODS.stopWorkflow]: AuthOrchestrationOperateScope,

@@ -2,7 +2,7 @@
 // needs synchronous writes the FileSystem service does not offer.
 import * as NodeFS from "node:fs";
 
-import type { PluginId } from "@t3tools/contracts";
+import { PluginFleetEntry, type PluginId } from "@t3tools/contracts";
 import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import { fromJsonStringPretty } from "@t3tools/shared/schemaJson";
 import * as Effect from "effect/Effect";
@@ -13,6 +13,7 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 
 import * as ServerConfig from "../config.ts";
+import { recordSwitch } from "./pluginFleet.ts";
 
 export class PluginConfigError extends Schema.TaggedError<PluginConfigError>()(
   "PluginConfigError",
@@ -22,6 +23,10 @@ export class PluginConfigError extends Schema.TaggedError<PluginConfigError>()(
     return `Could not update ${this.path}. If it was edited by hand, fix or delete it.`;
   }
 }
+
+/** A `PluginFleetEntry` as plugins.json keeps it, under its plugin's id. */
+const StoredFleetEntry = PluginFleetEntry.mapFields(({ pluginId: _pluginId, ...fields }) => fields);
+export type StoredFleetEntry = typeof StoredFleetEntry.Type;
 
 // Unknown keys survive a rewrite, so a newer build's additions outlive a toggle by an older one.
 const PluginsConfigFile = Schema.StructWithRest(
@@ -35,6 +40,14 @@ const PluginsConfigFile = Schema.StructWithRest(
      * the server in a way the failure guard can't see, such as `process.exit`.
      */
     starting: Schema.optionalKey(Schema.Array(Schema.String)),
+    /** What this machine shares with the user's other machines; see pluginFleet.ts. */
+    fleet: Schema.optionalKey(
+      Schema.Struct({
+        /** Absent means on. */
+        sharing: Schema.optionalKey(Schema.Boolean),
+        entries: Schema.optionalKey(Schema.Record(Schema.String, StoredFleetEntry)),
+      }),
+    ),
   }),
   [Schema.Record(Schema.String, Schema.Json)],
 );
@@ -105,12 +118,22 @@ export const makePluginsConfig = Effect.gen(function* () {
         : read
       ).pipe(Effect.tap((next) => Ref.set(current, next))),
     write,
-    /** Also forgets that the plugin crashed the server: the user chose what happens next. */
-    writeEnabled: (pluginId: PluginId, enabled: boolean) =>
-      write((current) => ({
-        ...withoutCrash(current, pluginId),
-        enabled: { ...current.enabled, [pluginId]: enabled },
-      })),
+    /**
+     * Also forgets that the plugin crashed the server, since the user chose what happens next, and
+     * records the switch for the user's other machines.
+     */
+    writeEnabled: (pluginId: PluginId, enabled: boolean, now: number) =>
+      write((current) =>
+        recordSwitch(
+          {
+            ...withoutCrash(current, pluginId),
+            enabled: { ...current.enabled, [pluginId]: enabled },
+          },
+          pluginId,
+          enabled,
+          now,
+        ),
+      ),
     /**
      * Forgets the switch and crash of every plugin not in `found`, writing only if there are any.
      * A switch left on by a folder deleted by hand would start the next folder with its id unseen.

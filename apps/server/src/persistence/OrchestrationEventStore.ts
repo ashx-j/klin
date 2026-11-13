@@ -23,6 +23,7 @@ import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
 import { replayAndBufferProjectedLiveEvents } from "../orchestration-v2/LiveStreamBudget.ts";
@@ -112,6 +113,27 @@ export class OrchestrationEventStore extends Context.Service<
       events: ReadonlyArray<ApplicationStoredEvent>,
     ) => Effect.Effect<void>;
 
+    /**
+     * Stored project and agent events after `afterSequence`, oldest first, as stored, with the
+     * prompt a payload shares with an earlier row put back. For readers that keep or forward events
+     * without decoding them, such as plugins.
+     */
+    readonly readStoredRows: (input: {
+      readonly afterSequence: number;
+      readonly limit: number;
+      readonly eventTypes?: ReadonlyArray<string>;
+    }) => Effect.Effect<ReadonlyArray<StoredEventRow>, OrchestrationEventStoreError>;
+
+    /**
+     * A subscription, open until the scope closes, that gets each event once it commits. It buffers
+     * without bound, so take from it continuously.
+     */
+    readonly subscribeCommitted: Effect.Effect<
+      PubSub.Subscription<ApplicationStoredEvent>,
+      never,
+      Scope.Scope
+    >;
+
     readonly streamApplicationEvents: (input?: {
       readonly afterSequence?: number;
     }) => Stream.Stream<ApplicationStoredEvent, OrchestrationEventStoreError>;
@@ -162,6 +184,19 @@ const ProjectEventPersistedRowSchema = Schema.Struct({
 });
 
 const READ_PAGE_SIZE = 500;
+
+/** One `orchestration_events` row as `readStoredRows` returns it. */
+export interface StoredEventRow {
+  readonly sequence: number;
+  readonly eventId: string;
+  readonly commandId: string | null;
+  readonly aggregateKind: "project" | "thread";
+  readonly streamId: string;
+  readonly eventType: string;
+  readonly occurredAt: string;
+  readonly payloadJson: string;
+  readonly metadataJson: string;
+}
 
 interface ApplicationEventRow {
   readonly sequence: number;
@@ -397,6 +432,7 @@ const makeEventStore = Effect.gen(function* () {
     readonly threadId?: ThreadId;
     readonly commandId?: CommandId;
     readonly eventType?: OrchestrationV2DomainEvent["type"];
+    readonly eventTypes?: ReadonlyArray<string>;
     readonly onlyAgentEvents?: boolean;
     readonly limit: number;
   }) =>
@@ -437,6 +473,9 @@ const makeEventStore = Effect.gen(function* () {
           ...(input.threadId === undefined ? [] : [sql`stream_id = ${input.threadId}`]),
           ...(input.commandId === undefined ? [] : [sql`command_id = ${input.commandId}`]),
           ...(input.eventType === undefined ? [] : [sql`event_type = ${input.eventType}`]),
+          ...(input.eventTypes === undefined
+            ? []
+            : [sql`event_type IN ${sql.in(input.eventTypes)}`]),
         ])}
       ORDER BY sequence ASC
       LIMIT ${input.limit}
@@ -756,6 +795,28 @@ const makeEventStore = Effect.gen(function* () {
     input,
   ) => streamProjectedApplicationEvents({ ...input, project: (event) => event });
 
+  const readStoredRows: OrchestrationEventStore["Service"]["readStoredRows"] = (input) =>
+    readApplicationRows({
+      afterSequence: input.afterSequence,
+      limit: input.limit,
+      ...(input.eventTypes === undefined ? {} : { eventTypes: input.eventTypes }),
+    }).pipe(
+      Effect.map((rows) =>
+        rows.map((row): StoredEventRow => ({
+          sequence: row.sequence,
+          eventId: row.event_id,
+          commandId: row.command_id,
+          aggregateKind: row.aggregate_kind,
+          streamId: row.stream_id,
+          eventType: row.event_type,
+          occurredAt: row.occurred_at,
+          payloadJson: row.payload_json,
+          metadataJson: row.metadata_json,
+        })),
+      ),
+      Effect.mapError(toPersistenceSqlError("OrchestrationEventStore.readStoredRows:query")),
+    );
+
   return {
     appendProjectEvent,
     appendAgentEvents,
@@ -766,6 +827,8 @@ const makeEventStore = Effect.gen(function* () {
     latestApplicationSequence,
     prunedThroughSequence,
     readApplicationEvents: catchUpApplicationEvents,
+    readStoredRows,
+    subscribeCommitted: PubSub.subscribe(committedEvents),
     publishCommitted: (events) => PubSub.publishAll(committedEvents, events).pipe(Effect.asVoid),
     streamApplicationEvents,
     streamProjectedApplicationEvents,
