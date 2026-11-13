@@ -164,6 +164,7 @@ import {
   isScratchProject,
   isUnsupportedWindowsProjectPath,
   resolveProjectPathForDispatch,
+  trackedFoldersFromSelection,
 } from "@t3tools/client-runtime/state/projects";
 import { resolvePastedPath } from "@t3tools/shared/path";
 import {
@@ -3123,7 +3124,7 @@ function OpenCommandPaletteDialog(props: {
           scan={trackedFoldersRequest.scan}
           maxChecked={PROJECT_TRACKED_FOLDERS_MAX}
           onConfirm={(checked) =>
-            trackedFoldersRequest.resolve(checked.map(({ path, name }) => ({ path, name })))
+            trackedFoldersRequest.resolve(trackedFoldersFromSelection(checked, new Set()))
           }
           onSkip={() => trackedFoldersRequest.resolve([])}
           onClose={() => trackedFoldersRequest.resolve(null)}

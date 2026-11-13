@@ -60,6 +60,12 @@ describe("mergeScannedTrackedFolders", () => {
       }),
     ).toEqual([{ path: "c:/work/app/api", name: "api" }]);
   });
+
+  it("shortens a checked name the project schema would reject", () => {
+    const long = scanned("/work/app/long", "n".repeat(200));
+    const [folder] = mergeScannedTrackedFolders({ tracked: [], scanned: [long], checked: [long] });
+    expect(folder?.name).toHaveLength(128);
+  });
 });
 
 describe("untrackedScannedPaths", () => {
@@ -102,6 +108,11 @@ describe("resolveTrackedFolderInput", () => {
         exactEntryPath: "/home/me/code/tools",
       },
       { path: "/home/me/code/tools", name: "tools" },
+    ],
+    [
+      "a folder name longer than a project allows",
+      { query: `/srv/${"n".repeat(200)}`, listedDirectoryPath: null, exactEntryPath: null },
+      { path: `/srv/${"n".repeat(200)}`, name: "n".repeat(128) },
     ],
   ])("resolves %s", (_label, input, expected) => {
     expect(resolveTrackedFolderInput(input)).toEqual(expected);

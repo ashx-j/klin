@@ -1,5 +1,8 @@
 import type { ProjectTrackedFolder, WorkspaceScannedFolder } from "@t3tools/contracts";
-import { hasTrailingPathSeparator } from "@t3tools/client-runtime/state/projects";
+import {
+  hasTrailingPathSeparator,
+  trackedFoldersFromSelection,
+} from "@t3tools/client-runtime/state/projects";
 import {
   fileBasename,
   isAbsolutePath,
@@ -9,6 +12,9 @@ import {
 } from "@t3tools/shared/path";
 
 export const TRACKED_FOLDERS_FILTER_THRESHOLD = 8;
+
+// `ProjectTrackedFolder` refuses longer names; `trackedFoldersFromSelection` applies the same cap.
+const TRACKED_FOLDER_NAME_MAX = 128;
 
 /** Relative to the project folder when inside it, absolute otherwise. */
 export function trackedFolderDisplayPath(path: string, workspaceRoot: string): string {
@@ -66,11 +72,11 @@ export function mergeScannedTrackedFolders(input: {
     seen.add(key);
     merged.push(folder);
   }
-  for (const folder of input.checked) {
+  for (const folder of trackedFoldersFromSelection(input.checked, new Set())) {
     const key = normalizeProjectPathForComparison(folder.path);
     if (seen.has(key)) continue;
     seen.add(key);
-    merged.push({ path: folder.path, name: folder.name });
+    merged.push(folder);
   }
   return merged;
 }
@@ -97,5 +103,5 @@ export function resolveTrackedFolderInput(input: {
   const path = normalizeProjectPathForDispatch(rawPath);
   const name = fileBasename(path).trim();
   if (path.length === 0 || name.length === 0) return null;
-  return { path, name };
+  return { path, name: name.slice(0, TRACKED_FOLDER_NAME_MAX).trim() };
 }
