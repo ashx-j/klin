@@ -400,9 +400,15 @@ import {
   ScheduledTaskMutationResult,
 } from "./scheduledTask.ts";
 import {
+  PluginCreateDownloadUrlInput,
+  PluginCreateDownloadUrlResult,
   PluginCreateUploadUrlInput,
   PluginCreateUploadUrlResult,
   PluginError,
+  PluginFleetApplyInput,
+  PluginFleetApplyResult,
+  PluginFleetSetKeptOffInput,
+  PluginFleetSetSharingInput,
   PluginInvokeInput,
   PluginInvokeResult,
   PluginLinkInput,
@@ -614,6 +620,10 @@ export const WS_METHODS = {
   pluginsSettingsUpdate: "plugins.settings.update",
   pluginsInvoke: "plugins.invoke",
   pluginsSubscribe: "plugins.subscribe",
+  pluginsCreateDownloadUrl: "plugins.createDownloadUrl",
+  pluginsFleetApply: "plugins.fleet.apply",
+  pluginsFleetSetSharing: "plugins.fleet.setSharing",
+  pluginsFleetSetKeptOff: "plugins.fleet.setKeptOff",
 
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
   cloudInstallRelayClient: "cloud.installRelayClient",
@@ -2242,6 +2252,31 @@ const WsPluginsSubscribeRpc = Rpc.make(WS_METHODS.pluginsSubscribe, {
   stream: true,
 });
 
+/** Signs the URL a client downloads a plugin's files from, to copy it to another machine. */
+const WsPluginsCreateDownloadUrlRpc = Rpc.make(WS_METHODS.pluginsCreateDownloadUrl, {
+  payload: PluginCreateDownloadUrlInput,
+  success: PluginCreateDownloadUrlResult,
+  error: PluginRpcError,
+});
+
+const WsPluginsFleetApplyRpc = Rpc.make(WS_METHODS.pluginsFleetApply, {
+  payload: PluginFleetApplyInput,
+  success: PluginFleetApplyResult,
+  error: PluginRpcError,
+});
+
+const WsPluginsFleetSetSharingRpc = Rpc.make(WS_METHODS.pluginsFleetSetSharing, {
+  payload: PluginFleetSetSharingInput,
+  success: PluginFleetSetSharingInput,
+  error: PluginRpcError,
+});
+
+const WsPluginsFleetSetKeptOffRpc = Rpc.make(WS_METHODS.pluginsFleetSetKeptOff, {
+  payload: PluginFleetSetKeptOffInput,
+  success: PluginFleetSetKeptOffInput,
+  error: PluginRpcError,
+});
+
 const WsSubscribeAuthAccessRpc = Rpc.make(WS_METHODS.subscribeAuthAccess, {
   payload: Schema.Struct({}),
   success: AuthAccessStreamEvent,
@@ -2342,6 +2377,10 @@ export const WsRpcGroup = RpcGroup.make(
   WsPluginsSettingsUpdateRpc,
   WsPluginsInvokeRpc,
   WsPluginsSubscribeRpc,
+  WsPluginsCreateDownloadUrlRpc,
+  WsPluginsFleetApplyRpc,
+  WsPluginsFleetSetSharingRpc,
+  WsPluginsFleetSetKeptOffRpc,
   WsServerReportClientActivityRpc,
   WsCloudGetRelayClientStatusRpc,
   WsCloudInstallRelayClientRpc,
