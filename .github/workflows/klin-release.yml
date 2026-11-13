@@ -148,7 +148,7 @@ jobs:
           dir="$(mktemp -d)"
           tar -xzf release-cli/*.tar.gz -C "$dir"
           env -i HOME="$dir" "$dir"/t3-*/t3 status --json \
-            | node -e 'if (JSON.parse(require("node:fs").readFileSync(0, "utf8")).connect === null) throw new Error("The server archive has no T3 Connect config")'
+            | node -e 'if (typeof JSON.parse(require("node:fs").readFileSync(0, "utf8")).connect?.enabled !== "boolean") throw new Error("The server archive has no T3 Connect config")'
 
       # Unsigned. GITHUB_REPOSITORY points the app's update feed at this repository's releases.
       - name: Build Windows installer
