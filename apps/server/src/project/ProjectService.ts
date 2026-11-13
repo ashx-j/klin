@@ -30,6 +30,7 @@ import {
   encodeProjectCommandRejection,
   planProjectCommand,
   type ProjectCommand,
+  ProjectCommandInvariantError,
 } from "../orchestration-v2/ProjectCommands.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecutor.ts";
@@ -252,29 +253,43 @@ export const make = Effect.gen(function* () {
   // A folder may be missing from disk: it shows as missing until it is restored or removed.
   const normalizeTrackedFolders = (
     projectId: ProjectId,
-    workspaceRoot: string,
     folders: ReadonlyArray<ProjectTrackedFolder>,
   ) => {
-    const invalid = (detail: string) => Effect.fail(new ProjectInvalidError({ projectId, detail }));
-    const normalized: Array<ProjectTrackedFolder> = [];
-    for (const folder of folders) {
-      if (!path.isAbsolute(folder.path)) {
-        return invalid(`Tracked folder '${folder.path}' must be an absolute path.`);
-      }
-      const folderPath = path.resolve(folder.path);
-      if (isWithinRoot(path, workspaceRoot, folderPath)) {
-        return invalid(
-          folderPath === workspaceRoot
-            ? "The project's own folder is always part of it; track other folders."
-            : `Tracked folder '${folderPath}' contains the project's own folder.`,
+    const relative = folders.find((folder) => !path.isAbsolute(folder.path));
+    return relative === undefined
+      ? Effect.succeed(
+          folders.map((folder) => ({ path: path.resolve(folder.path), name: folder.name })),
+        )
+      : Effect.fail(
+          new ProjectInvalidError({
+            projectId,
+            detail: `Tracked folder '${relative.path}' must be an absolute path.`,
+          }),
         );
+  };
+
+  // Checked under the project lock, so concurrent edits cannot combine into a folder that holds the project.
+  const trackedFoldersProblem = (
+    command: ProjectCommand,
+    project: ProjectStore.ProjectRow | undefined,
+  ) => {
+    if (command.type === "project.delete") return undefined;
+    if (command.workspaceRoot === undefined && command.trackedFolders === undefined)
+      return undefined;
+    const current = command.type === "project.meta.update" ? project : undefined;
+    const workspaceRoot = command.workspaceRoot ?? current?.workspaceRoot;
+    if (workspaceRoot === undefined) return undefined;
+    const seen = new Set<string>();
+    for (const { path: folderPath } of command.trackedFolders ?? current?.trackedFolders ?? []) {
+      if (isWithinRoot(path, workspaceRoot, folderPath)) {
+        return folderPath === workspaceRoot
+          ? "The project's own folder is always part of it; track other folders."
+          : `Tracked folder '${folderPath}' contains the project's own folder.`;
       }
-      if (normalized.some((existing) => existing.path === folderPath)) {
-        return invalid(`Tracked folder '${folderPath}' is listed twice.`);
-      }
-      normalized.push({ path: folderPath, name: folder.name });
+      if (seen.has(folderPath)) return `Tracked folder '${folderPath}' is listed twice.`;
+      seen.add(folderPath);
     }
-    return Effect.succeed(normalized);
+    return undefined;
   };
 
   const commit = Effect.fn("ProjectService.commit")(function* (command: ProjectCommand) {
@@ -301,7 +316,14 @@ export const make = Effect.gen(function* () {
         state: { project, workspaceOwner },
         eventId,
         now,
-      });
+      }).pipe(
+        Result.flatMap((event) => {
+          const detail = trackedFoldersProblem(command, project);
+          return detail === undefined
+            ? Result.succeed(event)
+            : Result.fail(new ProjectCommandInvariantError({ commandType: command.type, detail }));
+        }),
+      );
       if (Result.isSuccess(planned)) {
         const { receipt } = yield* eventSink.commitProjectCommand({
           commandId: command.commandId,
@@ -419,7 +441,7 @@ export const make = Effect.gen(function* () {
       const trackedFolders =
         input.trackedFolders === undefined
           ? undefined
-          : yield* normalizeTrackedFolders(input.projectId, workspaceRoot, input.trackedFolders);
+          : yield* normalizeTrackedFolders(input.projectId, input.trackedFolders);
       yield* commit({
         type: "project.create",
         commandId: input.commandId,
@@ -448,15 +470,10 @@ export const make = Effect.gen(function* () {
               projectId: input.projectId,
               workspaceRoot: input.workspaceRoot,
             });
-      // Moving the project's folder re-checks the folders it keeps tracking.
       const trackedFolders =
-        input.trackedFolders === undefined && workspaceRoot === previousRoot
+        input.trackedFolders === undefined
           ? undefined
-          : yield* normalizeTrackedFolders(
-              input.projectId,
-              workspaceRoot,
-              input.trackedFolders ?? existing.value.trackedFolders,
-            );
+          : yield* normalizeTrackedFolders(input.projectId, input.trackedFolders);
       yield* commit({
         type: "project.meta.update",
         commandId: input.commandId,
@@ -473,9 +490,7 @@ export const make = Effect.gen(function* () {
           ? {}
           : { defaultThreadEnvMode: input.defaultThreadEnvMode }),
         ...(input.scripts === undefined ? {} : { scripts: input.scripts }),
-        ...(input.trackedFolders === undefined || trackedFolders === undefined
-          ? {}
-          : { trackedFolders }),
+        ...(trackedFolders === undefined ? {} : { trackedFolders }),
         ...(input.pinned === undefined ? {} : { pinned: input.pinned }),
         ...(input.archived === undefined ? {} : { archived: input.archived }),
       });

@@ -885,6 +885,60 @@ it.effect("serializes two projects claiming the same workspace root", () =>
   }).pipe(Effect.provide(layerProjectServiceDependencies)),
 );
 
+it.effect(
+  "refuses a move that waited on the lock while a folder around its new root was tracked",
+  () =>
+    Effect.gen(function* () {
+      const eventSink = yield* EventSink.EventSinkV2;
+      const trackCommandId = CommandId.make("command:folder-race:track");
+      const trackReachedCommit = yield* Deferred.make<void>();
+      const releaseTrack = yield* Deferred.make<void>();
+      const gatedSink = EventSink.EventSinkV2.of({
+        ...eventSink,
+        commitProjectCommand: (input) =>
+          input.commandId === trackCommandId
+            ? Deferred.succeed(trackReachedCommit, undefined).pipe(
+                Effect.andThen(Deferred.await(releaseTrack)),
+                Effect.andThen(eventSink.commitProjectCommand(input)),
+              )
+            : eventSink.commitProjectCommand(input),
+      });
+      const service = yield* ProjectService.make.pipe(
+        Effect.provideService(EventSink.EventSinkV2, gatedSink),
+      );
+      const projectId = ProjectId.make("project:folder-race");
+      yield* service.create({
+        commandId: CommandId.make("command:folder-race:create"),
+        projectId,
+        title: "Folder race",
+        workspaceRoot: "/work/folder-race/app",
+      });
+      const track = yield* service
+        .update({
+          commandId: trackCommandId,
+          projectId,
+          trackedFolders: [{ path: "/work/folder-race/shared", name: "Shared" }],
+        })
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.await(trackReachedCommit);
+      const move = yield* service
+        .update({
+          commandId: CommandId.make("command:folder-race:move"),
+          projectId,
+          workspaceRoot: "/work/folder-race/shared/app",
+        })
+        .pipe(Effect.flip, Effect.forkChild({ startImmediately: true }));
+      yield* Effect.yieldNow;
+      yield* Deferred.succeed(releaseTrack, undefined);
+      yield* Fiber.join(track);
+      assert.equal((yield* Fiber.join(move))._tag, "ProjectInvalidError");
+      assert.equal(
+        Option.getOrThrow(yield* service.getById(projectId)).workspaceRoot,
+        "/work/folder-race/app",
+      );
+    }).pipe(Effect.provide(layerProjectServiceDependencies)),
+);
+
 it.effect("rejects an update that waited on the lock while its project was deleted", () =>
   Effect.gen(function* () {
     const eventSink = yield* EventSink.EventSinkV2;
