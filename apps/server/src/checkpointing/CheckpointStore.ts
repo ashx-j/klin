@@ -12,6 +12,8 @@ export interface CaptureCheckpointInput {
   readonly checkpointRef: CheckpointRef;
   /** Folders below `cwd` (relative, `/`-separated) that have their own checkpoints. */
   readonly excludePaths?: ReadonlyArray<string>;
+  /** Also records what is staged, which a restore with `withIndex` puts back. */
+  readonly withIndex?: boolean;
 }
 
 export interface CaptureHeadCheckpointInput {
@@ -32,6 +34,8 @@ export interface RestoreCheckpointInput {
   readonly fallbackToHead?: boolean;
   /** Folders below `cwd` the restore leaves as they are, as in a capture. */
   readonly excludePaths?: ReadonlyArray<string>;
+  /** Puts back what a capture with `withIndex` recorded as staged, instead of resetting to HEAD. */
+  readonly withIndex?: boolean;
 }
 
 export interface DiffCheckpointsInput {

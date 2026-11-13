@@ -1046,14 +1046,49 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       );
       const indexId = yield* random.uuidV4();
       const tempIndexPath = path.join(gitCommonDir, `t3-checkpoint-index-${indexId}`);
+      const stagedIndexPath = `${tempIndexPath}-staged`;
       const hostEnv = yield* HostProcess.Environment;
       const commitEnv: NodeJS.ProcessEnv = { GIT_INDEX_FILE: tempIndexPath, ...checkpointIdentity };
+      const resolveUserIndexPath =
+        indexPath === undefined
+          ? execute({
+              operation,
+              cwd: input.cwd,
+              args: ["rev-parse", "--path-format=absolute", "--git-path", "index"],
+            }).pipe(Effect.map((result) => result.stdout.trim()))
+          : Effect.succeed(indexPath);
 
       const cleanupTempIndex = Effect.forEach(
-        [tempIndexPath, `${tempIndexPath}.lock`],
+        [tempIndexPath, `${tempIndexPath}.lock`, stagedIndexPath, `${stagedIndexPath}.lock`],
         (indexFile) => fileSystem.remove(indexFile, { force: true }).pipe(Effect.ignore),
         { discard: true },
       );
+      // What is staged, as a commit of the index's tree. Read from a copy, so the user's index
+      // stays unlocked. An index with conflicts has no tree, and its restore resets to HEAD.
+      const captureStaged = Effect.gen(function* () {
+        yield* fileSystem.copyFile(yield* resolveUserIndexPath, stagedIndexPath);
+        const tree = yield* execute({
+          operation,
+          cwd: input.cwd,
+          args: [...indexConfig, ...durableWrite, "write-tree"],
+          env: { GIT_INDEX_FILE: stagedIndexPath },
+          allowNonZeroExit: true,
+        });
+        if (tree.exitCode !== 0) return [];
+        const commit = yield* execute({
+          operation,
+          cwd: input.cwd,
+          args: [
+            ...durableWrite,
+            "commit-tree",
+            tree.stdout.trim(),
+            "-m",
+            `t3 checkpoint index ref=${input.checkpointRef}`,
+          ],
+          env: checkpointIdentity,
+        });
+        return ["-p", commit.stdout.trim()];
+      }).pipe(Effect.orElseSucceed(() => []));
 
       yield* Effect.gen(function* () {
         const sparseConfig = yield* execute({
@@ -1074,13 +1109,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         }
         if (headExists) {
           const reusedIndex = yield* Effect.gen(function* () {
-            const userIndexPath =
-              indexPath ??
-              (yield* execute({
-                operation,
-                cwd: input.cwd,
-                args: ["rev-parse", "--path-format=absolute", "--git-path", "index"],
-              })).stdout.trim();
+            const userIndexPath = yield* resolveUserIndexPath;
             const { mtime } = yield* fileSystem.stat(userIndexPath);
             if (Option.isNone(mtime)) return false;
             // Stay below the source timestamp even if Date rounded up, preserving Git's racy check.
@@ -1390,6 +1419,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
 
         const message = `t3 checkpoint ref=${input.checkpointRef}`;
         // HEAD is the parent so listAuthoredPaths can see how HEAD moved between checkpoints.
+        // What is staged is the second parent, where restoreCheckpoint looks for it.
         const commitTreeResult = yield* execute({
           operation,
           cwd: input.cwd,
@@ -1398,6 +1428,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
             "commit-tree",
             treeOid,
             ...(headExists ? ["-p", "HEAD"] : []),
+            ...(headExists && input.withIndex === true ? yield* captureStaged : []),
             "-m",
             message,
           ],
@@ -1496,6 +1527,15 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       }
       // Folders with checkpoints of their own are another restore's to change.
       const scope = [".", ...excludedPathspecs(input.excludePaths)];
+      const staged =
+        input.withIndex === true
+          ? yield* execute({
+              operation,
+              cwd: input.cwd,
+              args: ["rev-parse", "--verify", "--quiet", `${commitOid}^2`],
+              allowNonZeroExit: true,
+            }).pipe(Effect.map((result) => (result.exitCode === 0 ? [result.stdout.trim()] : [])))
+          : [];
 
       const tracked = yield* execute({
         operation,
@@ -1538,7 +1578,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         yield* execute({
           operation,
           cwd: input.cwd,
-          args: [...longPaths, "reset", "--quiet", "--", ...scope],
+          args: [...longPaths, "reset", "--quiet", ...staged, "--", ...scope],
         });
       });
       yield* recreateWorkspace;

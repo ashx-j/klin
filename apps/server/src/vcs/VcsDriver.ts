@@ -16,6 +16,8 @@ export interface VcsCaptureCheckpointInput {
   readonly checkpointRef: CheckpointRef;
   /** Folders below `cwd` (relative, `/`-separated) that other checkpoints own, such as nested clones. */
   readonly excludePaths?: ReadonlyArray<string>;
+  /** Also records what is staged, which a restore with `withIndex` puts back. */
+  readonly withIndex?: boolean;
 }
 
 export interface VcsCaptureHeadCheckpointInput {
@@ -36,6 +38,8 @@ export interface VcsRestoreCheckpointInput {
   readonly fallbackToHead?: boolean;
   /** Folders below `cwd` the restore leaves as they are, as in a capture. */
   readonly excludePaths?: ReadonlyArray<string>;
+  /** Puts back what a capture with `withIndex` recorded as staged, instead of resetting to HEAD. */
+  readonly withIndex?: boolean;
 }
 
 export const CHECKPOINT_DIFF_MAX_OUTPUT_BYTES = 10_000_000;

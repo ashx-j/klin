@@ -763,11 +763,10 @@ export const layer: Layer.Layer<
                 const preRewindRef = yield* scopeRef(target.scope.id, `pre-rewind-${attempt}`).pipe(
                   Effect.provideService(Digest.Digest, crypto),
                 );
-                yield* checkpointStore.captureCheckpoint({
-                  ...folder,
-                  checkpointRef: preRewindRef,
-                });
-                snapshots.push({ ...folder, checkpointRef: preRewindRef });
+                // With what is staged: a restore resets the index, and putting back must not.
+                const snapshot = { ...folder, checkpointRef: preRewindRef, withIndex: true };
+                yield* checkpointStore.captureCheckpoint(snapshot);
+                snapshots.push(snapshot);
                 // What this process knew of the folder no longer holds.
                 repositoryStates.delete(target.scope.id);
                 const restored = yield* checkpointStore.restoreCheckpoint({

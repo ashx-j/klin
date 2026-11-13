@@ -627,6 +627,10 @@ it.live("puts restored folders back when a later folder's restore fails", () =>
         yield* thread.run(last, "rev-parse", "--git-path", "index.lock"),
       );
       yield* write(lock, "");
+      // The project folder has a staged version under its latest edit.
+      yield* write(path.join(folders.shop, "a.txt"), "staged");
+      yield* thread.run(folders.shop, "add", "a.txt");
+      yield* write(path.join(folders.shop, "a.txt"), "2");
 
       const failed = yield* thread.rewind(1).pipe(Effect.flip);
 
@@ -639,6 +643,8 @@ it.live("puts restored folders back when a later folder's restore fails", () =>
         ]),
         ["2", "2", "2"],
       );
+      assert.equal(yield* thread.run(folders.shop, "diff", "--cached", "--name-only"), "a.txt");
+      assert.equal(yield* thread.run(folders.shop, "show", ":a.txt"), "staged");
       const recorded = yield* thread.recorded;
       assert.deepEqual(recorded.runs, ["completed", "completed"]);
       assert.deepEqual(recorded.checkpoints.api, { 0: "ready", 1: "ready", 2: "ready" });
