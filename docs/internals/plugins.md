@@ -157,13 +157,17 @@ the page sends it the canvas it paints under a light and a dark native theme.
 
 ## Event feed
 
-`events.stored` hands a plugin `orchestration_events` rows read only, as stored, with the prompt a
-row shares with an earlier one put back. Payloads stay JSON text, so the server decodes nothing and
-a plugin that keeps events keeps T3's own format, whatever it becomes. It is pull based: each
-`next()` reads one page from the reader connection, and nothing is buffered between pulls, so a
-slow plugin only falls behind. While caught up, the feed waits on a one-slot queue that a
-subscription to committed events refills, so a burst of commits wakes it once. The subscription
-exists only while a plugin iterates, and deactivation interrupts the stream.
+`events.stored` hands a plugin the project and V2 thread rows of `orchestration_events` read only,
+as stored, with the prompt a row shares with an earlier one put back. Legacy V1 rows are left out.
+Payloads stay JSON text, so the server decodes nothing and a plugin that keeps events keeps T3's own
+format, whatever it becomes. It is pull based: each `next()` reads one page from the reader
+connection, and nothing is read ahead or buffered between pulls, so a slow plugin only falls behind.
+Each read covers a bounded range of sequences up to the head it read first, and a page that ends
+short moves the cursor to that bound, so a `types` filter that matches rarely never re-reads the
+rows it left out. While caught up, the feed waits on a one-slot queue that a subscription to
+committed events refills, so a burst of commits wakes it once. The subscription exists only while a
+plugin iterates. The [facade](../../apps/server/src/plugins/api/facade.ts) closes the iterator when
+the plugin stops, so a plugin that never pulls again still releases it.
 
 [Projection maintenance](../../apps/server/src/orchestration-v2/ProjectionMaintenance.ts) deletes
 events about a day after the projections cover them, keeping some, such as each stream's newest.
@@ -181,31 +185,38 @@ client share.
 
 The client copies, not the servers. A client managing plugins on two machines already holds a
 session allowed to install code on each, and servers hold no credentials for each other except
-peer links, which are a Labs feature carrying an agent's access, not an owner's. So sharing adds no
-new way for one machine to act on another. The [sync loop](../../apps/web/src/plugins/pluginFleetSync.ts)
-plans from every sharing machine's list, copies files through the signed download and upload
-URLs, and sends switches and removals through `plugins.fleet.apply`. Each server decides under its
-lifecycle lock whether an entry is newer, so two windows syncing at once apply each change once.
-A server only reports entries to sessions that manage plugins, so a guest's server is never a
-source or a target.
+peer links, which are a Labs feature carrying an agent's access, not an owner's. So servers gain no
+new credentials for each other. The [sync loop](../../apps/web/src/plugins/pluginFleetSync.ts)
+plans from every sharing machine's list, copies files through the signed download and upload URLs,
+and sends switches, removals and later times for the same files through `plugins.fleet.apply`.
+Each server decides under its lifecycle lock whether an entry is newer, so two windows syncing at
+once apply each change once. A server only reports entries to sessions that manage plugins, so a
+guest's server is never a source or a target. The loop asks each machine to rescan when it
+connects, because nothing watches `plugins/`.
 
 An entry only describes files the machine has, or a removal it carried out, so discovery can tell a
 change made on the machine from one waiting to arrive: a folder whose revision differs from its
-entry was changed there. A new folder takes its newest file time, so of two machines that had
-different versions before they shared, the one installed later wins. Local changes take at least the
-entry's time plus one, so a change made after seeing another machine's wins even with skewed clocks.
-A revision hashes paths and bytes with `/` separators and leaves out `.git` and `node_modules`, as
-uploads do, so it is the same on every platform. Discovery caches it by file sizes and times.
+entry was changed there. A changed or new folder takes its newest file time, and local changes take
+at least the entry's time plus one, so a change made after seeing another machine's wins even with
+skewed clocks. A linked folder is recorded only when it is linked or reloaded, with the current
+time, so an agent's edit in progress never spreads on a rescan. A revision hashes paths and bytes
+with `/` separators and leaves out `.git`, `node_modules` and `.env` files, so it is the same on
+every platform and a developer's secrets stay put. Discovery caches it by file sizes and times. The
+same revision with a later time is only recorded, never installed again.
 
-A copy that fails to start stays, unlike a manual update that rolls back, because the other
-machines have that version and a rollback would only diverge. The switch from a removed plugin's
-entry is kept for when it comes back.
+A switch at time 0 is no decision: a new entry records the plugin off at 0 however it was switched,
+so the first sync turns nothing on, and the user's first flip is shared. A plugin installed again
+after its removal is new, so its entry records it off at that time. A copy that fails to start
+stays, unlike a manual update that rolls back, because the other machines have that version and a
+rollback would only diverge. A plugin kept off a machine has no entry there and is skipped by the
+planner, so that machine neither gets it nor spreads its removal.
 
 The trust step moves with it: a plugin still arrives off, and turning it on is a decision for every
-machine. Anything that can write one machine's `plugins/` folder or `plugins.json` can therefore get
-code onto the others once a client connects to both. Plugins are trusted code and an agent with full
-access on a machine can already run anything there, so this is accepted for a single owner's
-machines; the per-machine **Share plugins** switch is the way out.
+machine. But anything that can write one machine's `plugins/` folder, a linked folder it can then
+reload, or `plugins.json` can get code onto the others once a client connects to both. Plugins are
+trusted code and an agent with full access on a machine can already run anything there, so this is
+accepted for a single owner's machines; **Remove here only** and the per-machine **Share plugins**
+switch are the ways out.
 
 ## Agent tools
 

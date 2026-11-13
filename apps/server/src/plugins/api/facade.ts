@@ -80,6 +80,8 @@ export class PluginApiCallError extends Error {
   }
 }
 
+const DONE: IteratorReturnResult<undefined> = { done: true, value: undefined };
+
 export const abortEffect = (signal: AbortSignal) =>
   Effect.callback<void>((resume) => {
     const onAbort = () => resume(Effect.void);
@@ -145,27 +147,28 @@ export const makeFacadeContext = (input: {
         ),
       );
     },
-    // The plugin pulls, but each pull runs T3's side of the stream, so it is a call too.
+    // The plugin pulls, but each pull runs T3's side of the stream, so it is a call too. The
+    // stream closes when the plugin stops even if it never pulls again, and nothing reads ahead.
     iterate: (stream, signal) => {
-      const ended =
+      const iterable = Stream.toAsyncIterableWith(stream, context);
+      const stopped =
         signal === undefined
           ? activation.controller.signal
           : AbortSignal.any([activation.controller.signal, signal]);
-      const iterable = Stream.toAsyncIterableWith(
-        stream.pipe(Stream.interruptWhen(abortEffect(ended))),
-        context,
-      );
       return {
         [Symbol.asyncIterator]: () => {
           const iterator = pluginCodeScope.exit(() => iterable[Symbol.asyncIterator]());
+          const close = () =>
+            pluginCodeScope.exit(() => iterator.return?.() ?? Promise.resolve(DONE));
+          const closeOnStop = () => void close().catch(() => undefined);
+          if (stopped.aborted) closeOnStop();
+          else stopped.addEventListener("abort", closeOnStop, { once: true });
           return {
             next: () => call(Effect.promise(() => iterator.next())),
-            return: () =>
-              call(
-                Effect.promise(
-                  () => iterator.return?.() ?? Promise.resolve({ done: true, value: undefined }),
-                ),
-              ),
+            return: () => {
+              stopped.removeEventListener("abort", closeOnStop);
+              return call(Effect.promise(close));
+            },
           };
         },
       };

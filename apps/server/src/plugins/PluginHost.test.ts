@@ -558,22 +558,33 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
     }).pipe(Effect.provide(layerConfig())),
   );
 
-  it.effect("refuses a dropped folder that would replace a linked plugin", () =>
+  it.effect("installs a dropped folder in place of a linked one, keeping its switch and data", () =>
     Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
       const { stateDir } = yield* ServerConfig.ServerConfig;
       const folder = `${stateDir}/checkout/linked`;
       yield* writeFile(`${folder}/t3-plugin.json`, manifestJson("linked"));
-      yield* writePluginsConfig({ devPaths: [folder] });
+      yield* writePluginsConfig({ enabled: { linked: true }, devPaths: [folder] });
       yield* Effect.gen(function* () {
         const host = yield* PluginHost.PluginHost;
         const installer = yield* PluginInstaller.PluginInstaller;
-        yield* waitForStatuses(host, { linked: "disabled" });
-        const refused = yield* installer
-          .installFiles([
-            { path: "t3-plugin.json", contents: new TextEncoder().encode(manifestJson("linked")) },
-          ])
-          .pipe(Effect.flip);
-        assert.strictEqual(refused.message, `linked is linked from ${folder}. Unlink it first.`);
+        const storage = yield* PluginStorage.PluginStorage;
+        yield* waitForStatuses(host, { linked: "active" });
+        yield* storage.set(PluginId.make("linked"), "kept", true);
+        const installed = yield* installer.installFiles([
+          { path: "t3-plugin.json", contents: new TextEncoder().encode(manifestJson("linked")) },
+        ]);
+        assert.include(installed, { source: "installed", enabled: true, status: "active" });
+        assert.deepStrictEqual(
+          yield* storage.get(PluginId.make("linked"), "kept"),
+          Option.some(true),
+        );
+        // The developer's folder stays where it was; only the link is forgotten.
+        assert.isTrue(yield* fs.exists(`${folder}/t3-plugin.json`));
+        assert.deepStrictEqual(
+          JSON.parse(yield* fs.readFileString(`${stateDir}/plugins.json`)).devPaths,
+          [],
+        );
       }).pipe(Effect.provide(layerHost()));
     }).pipe(Effect.provide(layerConfig())),
   );

@@ -22,6 +22,7 @@ import {
   writeFile,
 } from "./pluginHostTestHarness.ts";
 import * as PluginInstaller from "./PluginInstaller.ts";
+import * as PluginStorage from "./PluginStorage.ts";
 
 const notes = PluginId.make("notes");
 const found = (overrides: Partial<FoundPlugin> = {}): FoundPlugin => ({
@@ -42,24 +43,36 @@ const record = (input: Partial<Parameters<typeof recordLocalChanges>[0]>) =>
   });
 
 describe("recordLocalChanges", () => {
-  it("records a new folder, with off as a default any decision beats", () => {
-    assert.deepStrictEqual(record({ found: [found()], present: new Set([notes]) })?.fleet, {
-      entries: {
-        notes: {
-          revision: "a".repeat(64),
-          version: "1.0.0",
-          filesAt: 500,
-          enabled: false,
-          enabledAt: 0,
-        },
-      },
-    });
+  it("records a new folder with no switch decision, even where it is on, and skips kept-off plugins", () => {
+    const expected = {
+      revision: "a".repeat(64),
+      version: "1.0.0",
+      filesAt: 500,
+      enabled: false,
+      enabledAt: 0,
+    };
     const on = record({
       config: { enabled: { notes: true } },
       found: [found()],
       present: new Set([notes]),
     });
-    assert.include(on?.fleet?.entries?.notes, { enabled: true, enabledAt: 500 });
+    assert.deepStrictEqual(on?.fleet?.entries?.notes, expected);
+    const keptOff = { fleet: { keptOff: [notes] } };
+    assert.isUndefined(record({ config: keptOff, found: [found()], present: new Set([notes]) }));
+  });
+
+  it("turns a plugin installed again after its removal off on every machine", () => {
+    const removed = {
+      fleet: {
+        entries: { notes: { revision: null, filesAt: 600, enabled: true, enabledAt: 700 } },
+      },
+    };
+    const back = record({
+      config: removed,
+      found: [found({ modifiedAt: 800 })],
+      present: new Set([notes]),
+    });
+    assert.include(back?.fleet?.entries?.notes, { filesAt: 800, enabled: false, enabledAt: 800 });
   });
 
   it("dates a change made here after the entry it replaces, and keeps the switch", () => {
@@ -138,6 +151,12 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("plugin sharing",
         const olderOff = { ...shared, enabled: false, enabledAt: shared.filesAt + 5 };
         assert.isFalse((yield* installer.applyFleet(olderOff)).applied);
         assert.strictEqual(stateOf(yield* listStates(host), "hello-plugin")?.status, "active");
+        // The same files with a later time are recorded, not installed and restarted again.
+        const started = stateOf(yield* listStates(host), "hello-plugin")?.revision;
+        const later = { ...turnedOn, filesAt: shared.filesAt + 15 };
+        assert.isTrue((yield* installer.applyFleet(later)).applied);
+        assert.deepStrictEqual((yield* fleetEntries(host)).get(hello), later);
+        assert.strictEqual(stateOf(yield* listStates(host), "hello-plugin")?.revision, started);
 
         const removed = {
           pluginId: hello,
@@ -169,6 +188,60 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("plugin sharing",
         const after = (yield* fleetEntries(host)).get(hello);
         assert.include(after, { enabled: true });
         assert.isAbove(after?.enabledAt ?? 0, Option.getOrThrow(before).enabledAt);
+      }).pipe(Effect.provide(layerHost()));
+    }).pipe(Effect.provide(layerConfig())),
+  );
+
+  it.effect("links a folder in place of the installed copy and keeps its data", () =>
+    Effect.gen(function* () {
+      yield* installHello;
+      const { stateDir } = yield* ServerConfig.ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      const folder = `${stateDir}/checkout/hello-plugin`;
+      yield* writeFile(
+        `${folder}/t3-plugin.json`,
+        yield* fs.readFileString(`${fixturesDir}hello-plugin/t3-plugin.json`),
+      );
+      yield* writeFile(`${folder}/server.cjs`, "module.exports = { activate() {} };");
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        const installer = yield* PluginInstaller.PluginInstaller;
+        const storage = yield* PluginStorage.PluginStorage;
+        yield* waitForStatuses(host, { "hello-plugin": "disabled" });
+        yield* storage.set(hello, "outbox", 3);
+        const installed = (yield* fleetEntries(host)).get(hello);
+
+        const linked = yield* installer.link(folder);
+        assert.strictEqual(linked.source, "dev");
+        assert.deepStrictEqual(yield* storage.get(hello, "outbox"), Option.some(3));
+        // Other machines get the linked files as an update, never a removal.
+        const shared = (yield* fleetEntries(host)).get(hello);
+        assert.isString(shared?.revision);
+        assert.notStrictEqual(shared?.revision, installed?.revision);
+      }).pipe(Effect.provide(layerHost()));
+    }).pipe(Effect.provide(layerConfig())),
+  );
+
+  it.effect("keeps a plugin off this machine only, refuses copies of it, and lets it back", () =>
+    Effect.gen(function* () {
+      yield* installHello;
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        const installer = yield* PluginInstaller.PluginInstaller;
+        yield* waitForStatuses(host, { "hello-plugin": "disabled" });
+        const shared = (yield* fleetEntries(host)).get(hello);
+        if (shared === undefined) return assert.fail("hello-plugin is not shared");
+
+        yield* installer.setKeptOff(hello, true);
+        assert.isUndefined(stateOf(yield* listStates(host), "hello-plugin"));
+        // No removal is recorded, so other machines keep it.
+        assert.isUndefined((yield* fleetEntries(host)).get(hello));
+        const newer = { ...shared, enabled: true, enabledAt: shared.filesAt + 10 };
+        const refused = yield* installer.applyFleet(newer).pipe(Effect.flip);
+        assert.strictEqual(refused._tag, "PluginInstallError");
+
+        yield* installer.setKeptOff(hello, false);
+        assert.isTrue((yield* installer.applyFleet({ ...newer, revision: null })).applied);
       }).pipe(Effect.provide(layerHost()));
     }).pipe(Effect.provide(layerConfig())),
   );

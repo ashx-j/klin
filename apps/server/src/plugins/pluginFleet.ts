@@ -21,10 +21,13 @@ import type { PluginsConfigFile, StoredFleetEntry } from "./pluginsConfig.ts";
  * has, or a removal it carried out, so a folder that no longer matches its entry was changed here.
  */
 
-// Clients leave these out of uploads, so they are never part of a plugin's files.
+// Clients leave the folders out of uploads. `.env` files hold a developer's secrets, which a linked
+// folder must not carry to every machine; plugins keep secrets in their settings instead.
 const LEFT_OUT = new Set([".git", "node_modules"]);
-const isLeftOut = (relativePath: string) =>
-  relativePath.split("/").some((segment) => LEFT_OUT.has(segment));
+const isLeftOutName = (name: string) => LEFT_OUT.has(name) || /^\.env(\..*)?$/.test(name);
+const isLeftOut = (relativePath: string) => relativePath.split("/").some(isLeftOutName);
+// A symlinked folder is followed, so a loop must end somewhere.
+const MAX_FOLDER_DEPTH = 32;
 
 export interface PluginFile {
   /** Relative to the plugin folder, with `/` on every platform. */
@@ -61,37 +64,57 @@ interface FolderFile {
   readonly modifiedAt: number;
 }
 
-/** The files a copy of the plugin carries, with sizes and times, within the upload limits. */
+/**
+ * The files a copy of the plugin carries, with sizes and times, within the upload limits. Left-out
+ * folders are never walked, so a linked folder's `node_modules` costs nothing.
+ */
 const listFolder = Effect.fn("PluginFleet.listFolder")(function* (rootDir: string) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const unreadable = (cause: { readonly message: string }) =>
     new PluginFolderUnsharableError({ reason: `Could not read its folder: ${cause.message}` });
-  const entries = yield* fs
-    .readDirectory(rootDir, { recursive: true })
-    .pipe(Effect.mapError(unreadable));
+  const tooLarge = new PluginFolderUnsharableError({
+    reason: `It has more than ${PLUGIN_UPLOAD_MAX_FILES} files or ${PLUGIN_UPLOAD_MAX_BYTES / 1024 / 1024} MB, or folders nested more than ${MAX_FOLDER_DEPTH} deep, so it can't be copied to other machines.`,
+  });
   const files: Array<FolderFile> = [];
   let bytes = 0;
-  for (const entry of entries.toSorted()) {
-    const relative = entry.split(path.sep).join("/");
-    if (isLeftOut(relative)) continue;
-    const absolute = path.join(rootDir, entry);
-    const info = yield* fs.stat(absolute).pipe(Effect.mapError(unreadable));
-    if (info.type !== "File") continue;
-    const size = Number(info.size);
-    bytes += size;
-    if (files.length >= PLUGIN_UPLOAD_MAX_FILES || bytes > PLUGIN_UPLOAD_MAX_BYTES) {
-      return yield* new PluginFolderUnsharableError({
-        reason: `It has more than ${PLUGIN_UPLOAD_MAX_FILES} files or ${PLUGIN_UPLOAD_MAX_BYTES / 1024 / 1024} MB, so it can't be copied to other machines.`,
-      });
-    }
-    files.push({
-      path: relative,
-      absolute,
-      size,
-      modifiedAt: Option.match(info.mtime, { onNone: () => 0, onSome: (date) => date.getTime() }),
-    });
-  }
+  // Untraced: once per folder, inside listFolder's span.
+  const walk: (
+    relative: string,
+    depth: number,
+  ) => Effect.Effect<void, PluginFolderUnsharableError> = Effect.fnUntraced(
+    function* (relative, depth) {
+      if (depth > MAX_FOLDER_DEPTH) return yield* tooLarge;
+      const folder = relative === "" ? rootDir : path.join(rootDir, ...relative.split("/"));
+      const names = yield* fs.readDirectory(folder).pipe(Effect.mapError(unreadable));
+      for (const name of names.toSorted()) {
+        if (isLeftOutName(name)) continue;
+        const child = relative === "" ? name : `${relative}/${name}`;
+        const absolute = path.join(folder, name);
+        // `stat` follows links, so a symlinked file or folder arrives as what it points to.
+        const info = yield* fs.stat(absolute).pipe(Effect.mapError(unreadable));
+        if (info.type === "Directory") {
+          yield* walk(child, depth + 1);
+          continue;
+        }
+        if (info.type !== "File") continue;
+        bytes += Number(info.size);
+        if (files.length >= PLUGIN_UPLOAD_MAX_FILES || bytes > PLUGIN_UPLOAD_MAX_BYTES) {
+          return yield* tooLarge;
+        }
+        files.push({
+          path: child,
+          absolute,
+          size: Number(info.size),
+          modifiedAt: Option.match(info.mtime, {
+            onNone: () => 0,
+            onSome: (date) => date.getTime(),
+          }),
+        });
+      }
+    },
+  );
+  yield* walk("", 0);
   return files;
 });
 
@@ -154,9 +177,13 @@ const fleetEntriesOf = (config: PluginsConfigFile): ReadonlyArray<PluginFleetEnt
     isPluginId(pluginId) ? [{ pluginId, ...entry }] : [],
   );
 
+export const keptOffOf = (config: PluginsConfigFile): ReadonlySet<string> =>
+  new Set(config.fleet?.keptOff ?? []);
+
 export const fleetOf = (config: PluginsConfigFile): PluginFleet => ({
   sharing: config.fleet?.sharing !== false,
   entries: fleetEntriesOf(config),
+  keptOff: (config.fleet?.keptOff ?? []).filter(isPluginId),
 });
 
 export const withFleetEntry = (
@@ -179,7 +206,7 @@ export interface FoundPlugin extends FolderRevision {
 /**
  * Records changes made here outside a copy: changed and new folders, and removed ones after a
  * discovery that read every folder. `present` holds every id discovery listed, failed ones
- * included. A change takes its newest file time. Returns undefined when nothing changed.
+ * included. Plugins kept off this machine are its own. Returns undefined when nothing changed.
  */
 export const recordLocalChanges = (input: {
   readonly config: PluginsConfigFile;
@@ -189,29 +216,34 @@ export const recordLocalChanges = (input: {
   readonly now: number;
 }): PluginsConfigFile | undefined => {
   const { config, now } = input;
+  const keptOff = keptOffOf(config);
   const entries: Record<string, StoredFleetEntry> = { ...config.fleet?.entries };
   let changed = false;
   for (const plugin of input.found) {
     const entry = entries[plugin.pluginId];
-    if (entry?.revision === plugin.revision) continue;
+    if (keptOff.has(plugin.pluginId) || entry?.revision === plugin.revision) continue;
     const changedAt = Math.min(Math.max(0, plugin.modifiedAt), now);
     changed = true;
     if (entry === undefined) {
-      const enabled = config.enabled?.[plugin.pluginId] === true;
       entries[plugin.pluginId] = {
         revision: plugin.revision,
         version: plugin.version,
         filesAt: changedAt,
-        enabled,
-        // Off is the default, not a decision, so a switch turned on elsewhere wins over it.
-        enabledAt: enabled ? changedAt : 0,
+        // How it was switched before it was shared is no decision for other machines, so it
+        // arrives off there until the user flips it somewhere.
+        enabled: false,
+        enabledAt: 0,
       };
     } else {
+      const filesAt = Math.max(changedAt, entry.filesAt + 1);
       entries[plugin.pluginId] = {
-        ...entry,
         revision: plugin.revision,
         version: plugin.version,
-        filesAt: Math.max(changedAt, entry.filesAt + 1),
+        filesAt,
+        // A plugin installed again after its removal is new, so it is off everywhere until turned on.
+        ...(entry.revision === null
+          ? { enabled: false, enabledAt: Math.max(filesAt, entry.enabledAt + 1) }
+          : { enabled: entry.enabled, enabledAt: entry.enabledAt }),
       };
     }
   }

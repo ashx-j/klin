@@ -4,6 +4,7 @@ import {
   type PluginCreateDownloadUrlInput,
   type PluginCreateUploadUrlInput,
   type PluginFleetApplyInput,
+  type PluginFleetSetKeptOffInput,
   type PluginFleetSetSharingInput,
   type PluginId,
   type PluginInvokeInput,
@@ -90,6 +91,10 @@ export const makePluginRpcHandlers = (
       Effect.as({ sharing: input.sharing }),
       Effect.mapError((error) => new PluginError({ message: error.message })),
     ),
+  [WS_METHODS.pluginsFleetSetKeptOff]: (input: PluginFleetSetKeptOffInput) =>
+    installer
+      .setKeptOff(input.pluginId, input.keptOff)
+      .pipe(Effect.as(input), Effect.mapError(toRpcError(input.pluginId))),
   [WS_METHODS.pluginsSubscribe]: (input: PluginSubscribeInput) =>
     pluginHost.subscribe(input).pipe(
       Stream.map((value) => ({ value })),

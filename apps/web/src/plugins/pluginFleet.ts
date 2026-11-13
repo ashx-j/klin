@@ -22,7 +22,10 @@ export const fleetMachinesAtom = Atom.make((get): ReadonlyArray<FleetMachine> =>
     const { plugins, fleet } = result.value;
     if (fleet === undefined) return { ...machine, status: { kind: "unavailable" } };
     if (!fleet.sharing) return { ...machine, status: { kind: "left-out" } };
-    return { ...machine, status: { kind: "sharing", plugins, entries: fleet.entries } };
+    return {
+      ...machine,
+      status: { kind: "sharing", plugins, entries: fleet.entries, keptOff: new Set(fleet.keptOff) },
+    };
   }),
 ).pipe(Atom.withLabel("web-plugin-fleet-machines"));
 

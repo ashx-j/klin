@@ -55,6 +55,10 @@ export function createPluginEnvironmentAtoms<R, E>(
       label: "environment-data:plugins:fleet-set-sharing",
       tag: WS_METHODS.pluginsFleetSetSharing,
     }),
+    setPluginKeptOff: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:plugins:fleet-set-kept-off",
+      tag: WS_METHODS.pluginsFleetSetKeptOff,
+    }),
     rescanPlugins: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:plugins:rescan",
       tag: WS_METHODS.pluginsRescan,

@@ -95,7 +95,9 @@ for the web half, MCP tools for agents, and the environment's stored events. `ap
 reads from memory after its first call, so a handler can call it on every request.
 `api.environmentId` names the environment, and `api.dataDir` is a folder for the plugin's own
 files, such as a database, which T3 Code deletes when the plugin is removed. Both arrived in API
-version 2.
+version 2. Never write into `rootDir`: an update replaces the whole folder, and T3 Code copies the
+plugin to the user's other machines whenever its files change, so a file written there restarts
+the plugin everywhere.
 
 Everything a plugin registers is released when it is disabled, reloaded or uninstalled; add your
 own cleanup with `api.onDeactivate`.
@@ -133,13 +135,16 @@ for it, so a slow plugin falls behind on its own and never holds up T3 Code. It 
 version 2.
 
 ```js
-const saved = await api.storage.get("cursor");
-for await (const batch of api.events.stored({
-  afterSequence: typeof saved === "number" ? saved : 0,
-})) {
-  for (const event of batch.events) handle(event.type, JSON.parse(event.payloadJson));
-  const last = batch.events.at(-1);
-  if (last !== undefined) await api.storage.set("cursor", last.sequence);
+activate(api) {
+  // Not awaited: `activate` must finish within 30 seconds, and the loop runs until the plugin stops.
+  void (async () => {
+    const saved = await api.storage.get("cursor");
+    for await (const batch of api.events.stored({ afterSequence: typeof saved === "number" ? saved : 0 })) {
+      for (const event of batch.events) handle(event.type, JSON.parse(event.payloadJson));
+      const last = batch.events.at(-1);
+      if (last !== undefined) await api.storage.set("cursor", last.sequence);
+    }
+  })().catch((error) => api.log.error("event loop stopped", { error: String(error) }));
 }
 ```
 
@@ -152,9 +157,9 @@ for await (const batch of api.events.stored({
   such as each thread's newest event. So a full read from 0 gets only what is left, and a plugin
   that was off for longer misses events. `batch.missed` names the range T3 may have deleted before
   the feed read it.
-- Tool output is what the agent saw. Claude Code cuts most tool output at about 30,000 characters
-  before the agent reads it, so the event has the cut text. T3 Code cuts a file change's diff at
-  32 KB.
+- Tool output is what the provider reported. Claude Code cuts most tool output at about 30,000
+  characters before the agent reads it, so the event has the cut text. Other providers' output is
+  stored as they report it, and T3 Code cuts a file change's diff at 32 KB.
 
 ## Tools for agents
 
@@ -303,10 +308,13 @@ parts of your design to survive that. Build each part on the most stable thing T
 
 In Settings → Plugins, choose **Add plugin**, open **Link a plugin folder** and enter the plugin's
 folder path. Then turn the plugin on on its row, and use **Reload** after each change. The path is
-on the environment's machine. Your other machines that share plugins get an installed copy, and a
-new copy after each **Reload** that changed its files. Linking adds the folder to `devPaths` in `plugins.json`, and
-**Unlink** on its row removes it and leaves the folder alone. Linking refuses a folder whose id is
-already listed, so remove the installed copy first.
+on the environment's machine. Linking adds the folder to `devPaths` in `plugins.json`, and refuses a
+folder whose id is already linked from another folder. Linking in place of an installed copy keeps
+the plugin's switch, settings and data. The user's other machines that share plugins get an
+installed copy, and a new copy after each **Reload** that changed its files, without `.env` files.
+**Unlink** on its row stops loading the folder and leaves it alone, and, like **Remove**, removes
+the plugin from those machines too.
 
 To install a finished plugin, drag its folder onto Settings → Plugins, or use **Add plugin** to
-choose it. Unlink a linked copy first. It installs turned off, so turn it on on its row.
+choose it. Dropping it in place of a linked folder keeps the plugin's switch, settings and data. A
+new plugin installs turned off, so turn it on on its row.

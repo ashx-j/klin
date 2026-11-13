@@ -120,6 +120,7 @@ export class OrchestrationEventStore extends Context.Service<
      */
     readonly readStoredRows: (input: {
       readonly afterSequence: number;
+      readonly throughSequence?: number;
       readonly limit: number;
       readonly eventTypes?: ReadonlyArray<string>;
     }) => Effect.Effect<ReadonlyArray<StoredEventRow>, OrchestrationEventStoreError>;
@@ -798,6 +799,7 @@ const makeEventStore = Effect.gen(function* () {
   const readStoredRows: OrchestrationEventStore["Service"]["readStoredRows"] = (input) =>
     readApplicationRows({
       afterSequence: input.afterSequence,
+      ...(input.throughSequence === undefined ? {} : { throughSequence: input.throughSequence }),
       limit: input.limit,
       ...(input.eventTypes === undefined ? {} : { eventTypes: input.eventTypes }),
     }).pipe(

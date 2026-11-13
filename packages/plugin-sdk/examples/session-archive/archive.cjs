@@ -3,6 +3,7 @@ const NodeCrypto = require("node:crypto");
 const NodeFS = require("node:fs");
 const NodePath = require("node:path");
 const NodeSqlite = require("node:sqlite");
+const NodeWorker = require("node:worker_threads");
 
 /** @typedef {import("node:sqlite").DatabaseSync} Database */
 /** @typedef {import("@t3tools/plugin-sdk/server").PluginStoredEvent} StoredEvent */
@@ -22,10 +23,12 @@ const MAX_MACHINE_TEXT = 200;
 // A rowid table, not WITHOUT ROWID: payloads run to tens of KB, and SQLite advises against
 // WITHOUT ROWID for rows that large. Inserts skip a repeated primary key with `ON CONFLICT DO
 // NOTHING`, not `INSERT OR IGNORE`, which would also skip a row that breaks NOT NULL.
+// `machines.event_count` counts each machine's rows in `events`, so counting never scans them.
 const SCHEMA = `
 PRAGMA journal_mode = WAL;
 PRAGMA synchronous = NORMAL;
-PRAGMA busy_timeout = 1000;
+-- Only the worker waits on another process's lock. The feed and the sender retry what still fails.
+PRAGMA busy_timeout = 5000;
 CREATE TABLE IF NOT EXISTS events (
   machine TEXT NOT NULL,
   sequence INTEGER NOT NULL,
@@ -44,7 +47,8 @@ CREATE TABLE IF NOT EXISTS machines (
   machine TEXT PRIMARY KEY,
   label TEXT NOT NULL,
   cursor INTEGER NOT NULL,
-  last_seen TEXT NOT NULL
+  last_seen TEXT NOT NULL,
+  event_count INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS gaps (
   machine TEXT NOT NULL,
@@ -54,6 +58,8 @@ CREATE TABLE IF NOT EXISTS gaps (
   PRIMARY KEY (machine, after_sequence, through_sequence)
 ) WITHOUT ROWID;
 `;
+const EVENT_COLUMNS =
+  "machine, sequence, event_id, type, aggregate, stream_id, occurred_at, command_id, payload, metadata";
 
 /**
  * Opens an archive, or a spoke's outbox, which has the same tables. Creates the file and its
@@ -96,6 +102,20 @@ const readCursor = (db, machineId) => {
 };
 
 /**
+ * Adds `machine`, or updates its label, raises its cursor to `cursor` and adds `added` to its
+ * event count. The cursor never falls.
+ * @type {(db: Database, machine: Machine, cursor: number, added: number) => void}
+ */
+const saveMachine = (db, machine, cursor, added) => {
+  db.prepare(
+    `INSERT INTO main.machines (machine, label, cursor, last_seen, event_count) VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT (machine) DO UPDATE SET
+       label = excluded.label, cursor = max(cursor, excluded.cursor),
+       last_seen = excluded.last_seen, event_count = event_count + excluded.event_count`,
+  ).run(machine.id, machine.label, cursor, new Date().toISOString(), added);
+};
+
+/**
  * Stores an upload in one transaction and returns how many of its events were new. The machine's
  * cursor rises to `cursor` in the same commit and never falls.
  * @type {(db: Database, upload: Upload, cursor?: number) => number}
@@ -104,8 +124,7 @@ const storeUpload = (db, upload, cursor = 0) =>
   inTransaction(db, () => {
     const machine = upload.machine.id;
     const insertEvent = db.prepare(
-      `INSERT INTO events
-         (machine, sequence, event_id, type, aggregate, stream_id, occurred_at, command_id, payload, metadata)
+      `INSERT INTO events (${EVENT_COLUMNS})
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
     );
     let stored = 0;
@@ -132,11 +151,7 @@ const storeUpload = (db, upload, cursor = 0) =>
     for (const gap of upload.missed) {
       insertGap.run(machine, gap.afterSequence, gap.throughSequence, now);
     }
-    db.prepare(
-      `INSERT INTO machines (machine, label, cursor, last_seen) VALUES (?, ?, ?, ?)
-       ON CONFLICT (machine) DO UPDATE SET
-         label = excluded.label, cursor = max(cursor, excluded.cursor), last_seen = excluded.last_seen`,
-    ).run(machine, upload.machine.label, cursor, now);
+    saveMachine(db, upload.machine, cursor, stored);
     return stored;
   });
 
@@ -154,6 +169,41 @@ const storeFeedBatch = (db, machine, batch) =>
     const missed = batch.missed === undefined ? [] : [batch.missed];
     return storeUpload(db, { machine, events: batch.events, missed }, cursor);
   });
+
+/**
+ * Moves the outbox at `outboxFile` into `db` in one transaction, then deletes the outbox. Returns
+ * how many of its events were new to `db`, or `undefined` when there is no outbox. Running it
+ * again after a crash between the commit and the delete stores nothing twice.
+ * @type {(db: Database, outboxFile: string) => number | undefined}
+ */
+const mergeOutbox = (db, outboxFile) => {
+  if (!NodeFS.existsSync(outboxFile)) return undefined;
+  db.prepare("ATTACH DATABASE ? AS outbox").run(outboxFile);
+  let moved = 0;
+  try {
+    inTransaction(db, () => {
+      const copyEvents = db.prepare(
+        `INSERT INTO main.events (${EVENT_COLUMNS})
+         SELECT ${EVENT_COLUMNS} FROM outbox.events WHERE machine = ? ON CONFLICT DO NOTHING`,
+      );
+      for (const row of db.prepare("SELECT machine, label, cursor FROM outbox.machines").all()) {
+        const added = Number(copyEvents.run(String(row.machine)).changes);
+        const machine = { id: String(row.machine), label: String(row.label) };
+        saveMachine(db, machine, Number(row.cursor), added);
+        moved += added;
+      }
+      db.exec(
+        `INSERT INTO main.gaps SELECT machine, after_sequence, through_sequence, noticed_at
+         FROM outbox.gaps WHERE true ON CONFLICT DO NOTHING`,
+      );
+    });
+  } finally {
+    db.exec("DETACH DATABASE outbox");
+  }
+  for (const suffix of ["", "-wal", "-shm"])
+    NodeFS.rmSync(`${outboxFile}${suffix}`, { force: true });
+  return moved;
+};
 
 /** @type {(row: Record<string, import("node:sqlite").SQLOutputValue>) => StoredEvent} */
 const toEvent = (row) => ({
@@ -200,32 +250,35 @@ const readOutbox = (db, machine) => {
   return { machine, events, missed };
 };
 
-/** Deletes exactly the outbox rows in `upload`, so rows added while it was in flight stay.
- * @type {(db: Database, upload: Upload) => void}
+/** Deletes exactly the sent outbox rows, so rows added while they were in flight stay.
+ * @type {(db: Database, machineId: string, sequences: ReadonlyArray<number>, missed: ReadonlyArray<Gap>) => void}
  */
-const deleteUploaded = (db, upload) =>
+const deleteSent = (db, machineId, sequences, missed) =>
   inTransaction(db, () => {
-    const machine = upload.machine.id;
     const deleteEvent = db.prepare("DELETE FROM events WHERE machine = ? AND sequence = ?");
-    for (const event of upload.events) deleteEvent.run(machine, event.sequence);
+    let deleted = 0;
+    for (const sequence of sequences)
+      deleted += Number(deleteEvent.run(machineId, sequence).changes);
+    db.prepare("UPDATE machines SET event_count = event_count - ? WHERE machine = ?").run(
+      deleted,
+      machineId,
+    );
     const deleteGap = db.prepare(
       "DELETE FROM gaps WHERE machine = ? AND after_sequence = ? AND through_sequence = ?",
     );
-    for (const gap of upload.missed) {
-      deleteGap.run(machine, gap.afterSequence, gap.throughSequence);
-    }
+    for (const gap of missed) deleteGap.run(machineId, gap.afterSequence, gap.throughSequence);
   });
 
 /**
- * Sends the oldest outbox rows to the hub and deletes them once it answers 2xx. Throws when the
- * send fails, and the rows stay. `sent` is 0 when the outbox is empty. An event too big for the
- * hub to ever take would block the outbox for good, so it becomes a gap and `dropped` names it.
- * @type {(options: { db: Database; machine: Machine; hubUrl: string; key: string; signal: AbortSignal }) => Promise<{ sent: number; dropped?: number }>}
+ * The oldest outbox rows as one upload's JSON body, or `undefined` when the outbox is empty. An
+ * event too big for the hub to ever take would block the outbox for good, so it becomes a gap
+ * instead and `dropped` names it.
+ * @type {(db: Database, machine: Machine) => { body: string; sequences: Array<number>; missed: ReadonlyArray<Gap> } | { dropped: number } | undefined}
  */
-const sendOutbox = async ({ db, machine, hubUrl, key, signal }) => {
+const nextUpload = (db, machine) => {
   const upload = readOutbox(db, machine);
   const [first] = upload.events;
-  if (first === undefined && upload.missed.length === 0) return { sent: 0 };
+  if (first === undefined && upload.missed.length === 0) return undefined;
   const body = JSON.stringify(upload);
   if (
     first !== undefined &&
@@ -233,22 +286,149 @@ const sendOutbox = async ({ db, machine, hubUrl, key, signal }) => {
     Buffer.byteLength(body) > MAX_BODY_BYTES
   ) {
     inTransaction(db, () => {
-      deleteUploaded(db, { machine, events: [first], missed: [] });
+      deleteSent(db, machine.id, [first.sequence], []);
       const gap = { afterSequence: first.sequence - 1, throughSequence: first.sequence };
       storeUpload(db, { machine, events: [], missed: [gap] });
     });
-    return { sent: 0, dropped: first.sequence };
+    return { dropped: first.sequence };
   }
+  return { body, sequences: upload.events.map((event) => event.sequence), missed: upload.missed };
+};
+
+/** @type {(db: Database) => number} */
+const countEvents = (db) =>
+  Number(db.prepare("SELECT coalesce(sum(event_count), 0) AS count FROM machines").get()?.count);
+
+/** @type {(db: Database) => Array<{ label: string; cursor: number; lastSeen: string; events: number }>} */
+const listMachines = (db) =>
+  db
+    .prepare("SELECT label, cursor, last_seen, event_count FROM machines ORDER BY label")
+    .all()
+    .map((row) => ({
+      label: String(row.label),
+      cursor: Number(row.cursor),
+      lastSeen: String(row.last_seen),
+      events: Number(row.event_count),
+    }));
+
+/** @type {(db: Database) => void} */
+const closeDatabase = (db) => db.close();
+
+/** What the database worker answers, each run against the database it opened. */
+const queries = {
+  readCursor,
+  storeUpload,
+  storeFeedBatch,
+  mergeOutbox,
+  nextUpload,
+  deleteSent,
+  countEvents,
+  listMachines,
+  close: closeDatabase,
+};
+
+/** @typedef {typeof queries} Queries */
+/** @typedef {keyof Queries} QueryName */
+/** @typedef {{ [Name in QueryName]: Parameters<Queries[Name]> extends [Database, ...infer Args] ? Args : never }} QueryArgs */
+/** @typedef {{ [Name in QueryName]: ReturnType<Queries[Name]> }} QueryResults */
+/** @typedef {{ readonly id: number; readonly name: QueryName; readonly args: QueryArgs[QueryName] }} WorkerRequest */
+/** @typedef {{ readonly id: number; readonly value: unknown } | { readonly id: number; readonly error: string }} WorkerReply */
+
+/** @type {{ readonly [Name in QueryName]: (db: Database, ...args: QueryArgs[Name]) => QueryResults[Name] }} */
+const typedQueries = queries;
+
+/** @type {<Name extends QueryName>(db: Database, name: Name, args: QueryArgs[Name]) => QueryResults[Name]} */
+const runQuery = (db, name, args) => typedQueries[name](db, ...args);
+
+/**
+ * Runs `queries` on the database at `file` in a Worker, so SQLite never blocks the server's event
+ * loop. Calls run in order. The worker starts on the first call and again on the first call after
+ * it stopped. When it stops, its unanswered calls fail and `onStop` gets why.
+ * @type {(file: string, onStop: (error: Error) => void) => { readonly run: <Name extends QueryName>(name: Name, ...args: QueryArgs[Name]) => Promise<QueryResults[Name]>; readonly close: () => Promise<void> }}
+ */
+const openDatabaseWorker = (file, onStop) => {
+  /** @type {import("node:worker_threads").Worker | undefined} */
+  let worker;
+  let closed = false;
+  let nextId = 0;
+  /** @type {Map<number, { readonly resolve: (value: unknown) => void; readonly reject: (error: Error) => void }>} */
+  const calls = new Map();
+  /** @type {(stopped: import("node:worker_threads").Worker, error: Error) => void} */
+  const onStopped = (stopped, error) => {
+    if (worker !== stopped) return;
+    worker = undefined;
+    for (const call of calls.values()) call.reject(error);
+    calls.clear();
+    onStop(error);
+  };
+  const start = () => {
+    const started = new NodeWorker.Worker(NodePath.join(__dirname, "database-worker.cjs"), {
+      workerData: file,
+    });
+    started.unref();
+    started.on("message", (/** @type {WorkerReply} */ reply) => {
+      const call = calls.get(reply.id);
+      calls.delete(reply.id);
+      if ("error" in reply) call?.reject(new Error(reply.error));
+      else call?.resolve(reply.value);
+    });
+    started.on("error", (/** @type {unknown} */ error) =>
+      onStopped(started, error instanceof Error ? error : new Error(String(error))),
+    );
+    started.on("exit", (code) =>
+      onStopped(started, new Error(`The database worker exited with code ${code}.`)),
+    );
+    return started;
+  };
+  /** @type {<Name extends QueryName>(name: Name, ...args: QueryArgs[Name]) => Promise<QueryResults[Name]>} */
+  const run = (name, ...args) =>
+    new Promise((resolve, reject) => {
+      if (closed) throw new Error("The archive database is closed.");
+      worker ??= start();
+      const id = nextId++;
+      /** @type {WorkerRequest} */
+      const request = { id, name, args };
+      // oxlint-disable-next-line unicorn/require-post-message-target-origin -- Node workers do not accept a target origin.
+      worker.postMessage(request);
+      // The one place a value crosses back from the worker; `queries` decides its type.
+      calls.set(id, { resolve: /** @type {(value: unknown) => void} */ (resolve), reject });
+    });
+  return {
+    run,
+    // Waits for the calls already sent, then stops the worker.
+    close: async () => {
+      if (closed) return;
+      if (worker !== undefined) await run("close").catch(() => {});
+      closed = true;
+      const stopping = worker;
+      worker = undefined;
+      await stopping?.terminate();
+    },
+  };
+};
+
+/** @typedef {ReturnType<typeof openDatabaseWorker>} DatabaseWorker */
+
+/**
+ * Sends the oldest outbox rows to the hub and deletes them once it answers 2xx. Throws when the
+ * send fails, and the rows stay. `sent` is 0 when the outbox is empty, and `dropped` names an
+ * event too big for the hub that became a gap.
+ * @type {(options: { db: DatabaseWorker; machine: Machine; hubUrl: string; key: string; signal: AbortSignal }) => Promise<{ sent: number; dropped?: number }>}
+ */
+const sendOutbox = async ({ db, machine, hubUrl, key, signal }) => {
+  const upload = await db.run("nextUpload", machine);
+  if (upload === undefined) return { sent: 0 };
+  if ("dropped" in upload) return { sent: 0, dropped: upload.dropped };
   const response = await fetch(new URL("/events", hubUrl), {
     method: "POST",
     headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
-    body,
+    body: upload.body,
     signal,
   });
   const answer = await response.text();
   if (!response.ok) throw new Error(`The hub answered ${response.status}: ${answer.slice(0, 300)}`);
-  deleteUploaded(db, upload);
-  return { sent: upload.events.length + upload.missed.length };
+  await db.run("deleteSent", machine.id, upload.sequences, upload.missed);
+  return { sent: upload.sequences.length + upload.missed.length };
 };
 
 /**
@@ -347,7 +527,7 @@ const sha256 = (text) => NodeCrypto.createHash("sha256").update(text).digest();
  * Answers spokes on the hub. Only `POST /events` with `Authorization: Bearer <key>` and a valid
  * body stores anything, in one transaction. Uploads that claim `hubMachineId` are refused, so a
  * spoke can never move the cursor of the hub's own feed.
- * @type {(options: { db: Database; key: string; hubMachineId: string; onError: (error: unknown) => void }) => import("node:http").RequestListener}
+ * @type {(options: { db: DatabaseWorker; key: string; hubMachineId: string; onError: (error: unknown) => void }) => import("node:http").RequestListener}
  */
 const createIngestHandler = ({ db, key, hubMachineId, onError }) => {
   const expectedKey = sha256(key);
@@ -412,38 +592,28 @@ const createIngestHandler = ({ db, key, hubMachineId, onError }) => {
         reply(400, { error: "machine.id is the hub's own environment." });
         return;
       }
-      try {
-        const highest = Math.max(0, ...upload.events.map((event) => event.sequence));
-        reply(200, { stored: storeUpload(db, upload, highest) });
-      } catch (error) {
-        onError(error);
-        reply(500, { error: "The hub could not store the events." });
-      }
+      const highest = Math.max(0, ...upload.events.map((event) => event.sequence));
+      db.run("storeUpload", upload, highest).then(
+        (stored) => reply(200, { stored }),
+        (error) => {
+          reply(500, { error: "The hub could not store the events." });
+          onError(error);
+        },
+      );
     });
   };
 };
-
-/** @type {(db: Database) => number} */
-const countEvents = (db) => Number(db.prepare("SELECT count(*) AS count FROM events").get()?.count);
-
-/** @type {(db: Database) => Array<{ label: string; cursor: number; lastSeen: string }>} */
-const listMachines = (db) =>
-  db
-    .prepare("SELECT label, cursor, last_seen FROM machines ORDER BY label")
-    .all()
-    .map((row) => ({
-      label: String(row.label),
-      cursor: Number(row.cursor),
-      lastSeen: String(row.last_seen),
-    }));
 
 module.exports = {
   openDatabase,
   readCursor,
   storeUpload,
   storeFeedBatch,
-  sendOutbox,
-  createIngestHandler,
+  mergeOutbox,
   countEvents,
   listMachines,
+  runQuery,
+  openDatabaseWorker,
+  sendOutbox,
+  createIngestHandler,
 };

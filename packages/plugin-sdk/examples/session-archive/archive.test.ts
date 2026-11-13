@@ -7,6 +7,7 @@ import * as NodePath from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 
 import * as Archive from "./archive.cjs";
+import plugin from "./server.cjs";
 
 const KEY = "a-shared-key-of-24-chars";
 const laptop = { id: "env-laptop", label: "laptop" };
@@ -28,7 +29,14 @@ const tempDir = () => {
   return { path, [Symbol.dispose]: () => NodeFS.rmSync(path, { recursive: true, force: true }) };
 };
 
-const serveIngest = async (db: ReturnType<typeof Archive.openDatabase>) => {
+const openWorker = (file: string) => {
+  const db = Archive.openDatabaseWorker(file, (error) => {
+    throw error;
+  });
+  return { ...db, [Symbol.asyncDispose]: db.close };
+};
+
+const serveIngest = async (db: ReturnType<typeof Archive.openDatabaseWorker>) => {
   const handler = Archive.createIngestHandler({
     db,
     key: KEY,
@@ -85,7 +93,7 @@ describe("session archive", () => {
 
   it("stores an upload only with the right key and a well-formed body", async () => {
     using dir = tempDir();
-    using db = Archive.openDatabase(NodePath.join(dir.path, "archive.sqlite"));
+    await using db = openWorker(NodePath.join(dir.path, "archive.sqlite"));
     await using hub = await serveIngest(db);
     const post = async (body: string, key = KEY) => {
       const response = await fetch(`${hub.url}/events`, {
@@ -103,22 +111,23 @@ describe("session archive", () => {
     expect((await post(JSON.stringify(stringSequence))).status).toBe(400);
     const asHub = { ...upload, machine: { id: "env-hub", label: "hub" } };
     expect((await post(JSON.stringify(asHub))).status).toBe(400);
-    expect(Archive.countEvents(db)).toBe(0);
+    expect(await db.run("countEvents")).toBe(0);
 
     expect(await post(JSON.stringify(upload))).toEqual({ status: 200, body: { stored: 2 } });
     expect(await post(JSON.stringify(upload))).toEqual({ status: 200, body: { stored: 0 } });
-    expect(Archive.listMachines(db)).toEqual([
-      { label: "laptop", cursor: 2, lastSeen: expect.any(String) },
+    expect(await db.run("listMachines")).toEqual([
+      { label: "laptop", cursor: 2, lastSeen: expect.any(String), events: 2 },
     ]);
   });
 
   it("deletes outbox rows only after the hub stored them", async () => {
     using dir = tempDir();
-    using archive = Archive.openDatabase(NodePath.join(dir.path, "archive.sqlite"));
-    using outbox = Archive.openDatabase(NodePath.join(dir.path, "outbox", "outbox.sqlite"));
+    const archiveFile = NodePath.join(dir.path, "archive.sqlite");
+    await using archive = openWorker(archiveFile);
+    await using outbox = openWorker(NodePath.join(dir.path, "outbox", "outbox.sqlite"));
     await using hub = await serveIngest(archive);
-    Archive.storeFeedBatch(outbox, laptop, { events: [event(1), event(2)] });
-    Archive.storeFeedBatch(outbox, laptop, {
+    await outbox.run("storeFeedBatch", laptop, { events: [event(1), event(2)] });
+    await outbox.run("storeFeedBatch", laptop, {
       events: [event(5)],
       missed: { afterSequence: 2, throughSequence: 4 },
     });
@@ -132,17 +141,81 @@ describe("session archive", () => {
       });
 
     await expect(send("not-the-shared-key-at-all")).rejects.toThrow("401");
-    expect(Archive.countEvents(outbox)).toBe(3);
-    expect(Archive.countEvents(archive)).toBe(0);
+    expect(await outbox.run("countEvents")).toBe(3);
+    expect(await archive.run("countEvents")).toBe(0);
 
     expect(await send(KEY)).toEqual({ sent: 4 });
-    expect(Archive.countEvents(outbox)).toBe(0);
-    expect(gapsIn(outbox)).toEqual([]);
-    expect(Archive.readCursor(outbox, laptop.id)).toBe(5);
+    expect(await outbox.run("countEvents")).toBe(0);
+    expect(await outbox.run("readCursor", laptop.id)).toBe(5);
+    expect(await archive.run("countEvents")).toBe(3);
+    expect(await send(KEY)).toEqual({ sent: 0 });
+    using reader = Archive.openDatabase(archiveFile);
+    expect(gapsIn(reader)).toEqual([
+      { machine: laptop.id, after_sequence: 2, through_sequence: 4 },
+    ]);
+  });
+
+  it("moves a spoke's outbox into the archive when the spoke becomes the hub", () => {
+    using dir = tempDir();
+    const outboxFile = NodePath.join(dir.path, "outbox.sqlite");
+    {
+      using outbox = Archive.openDatabase(outboxFile);
+      Archive.storeFeedBatch(outbox, laptop, { events: [event(1), event(2)] });
+      Archive.storeFeedBatch(outbox, laptop, {
+        events: [event(5)],
+        missed: { afterSequence: 2, throughSequence: 4 },
+      });
+    }
+    using archive = Archive.openDatabase(NodePath.join(dir.path, "archive.sqlite"));
+    Archive.storeUpload(archive, { machine: laptop, events: [event(1)], missed: [] }, 1);
+
+    expect(Archive.mergeOutbox(archive, outboxFile)).toBe(2);
     expect(Archive.countEvents(archive)).toBe(3);
+    expect(Archive.readCursor(archive, laptop.id)).toBe(5);
     expect(gapsIn(archive)).toEqual([
       { machine: laptop.id, after_sequence: 2, through_sequence: 4 },
     ]);
-    expect(await send(KEY)).toEqual({ sent: 0 });
+    expect(NodeFS.readdirSync(dir.path).filter((name) => name.startsWith("outbox"))).toEqual([]);
+    expect(Archive.mergeOutbox(archive, outboxFile)).toBeUndefined();
+  });
+
+  it("keeps a machine's events in its outbox before it is set up", async () => {
+    using dir = tempDir();
+    let fed = () => {};
+    const feedRead = new Promise<void>((resolve) => (fed = resolve));
+    const cleanups: Array<() => void | Promise<void>> = [];
+    const ignore = () => {};
+    await plugin.activate({
+      version: 2,
+      id: "session-archive",
+      rootDir: import.meta.dirname,
+      environmentId: laptop.id,
+      dataDir: dir.path,
+      log: { debug: ignore, info: ignore, warn: ignore, error: ignore },
+      settings: { get: async () => ({}), changes: async function* () {} },
+      storage: {
+        get: async () => undefined,
+        set: async () => {},
+        delete: async () => {},
+        list: async () => [],
+      },
+      rpc: { register: ignore, publish: ignore },
+      onDeactivate: (cleanup) => cleanups.push(cleanup),
+      mcp: { registerTool: ignore },
+      events: {
+        stored: async function* (options) {
+          expect(options?.afterSequence).toBe(0);
+          yield { events: [event(1), event(2)] };
+          fed();
+          await new Promise((resolve) => options?.signal?.addEventListener("abort", resolve));
+        },
+      },
+    });
+    await feedRead;
+    for (const cleanup of cleanups) await cleanup();
+
+    using outbox = Archive.openDatabase(NodePath.join(dir.path, "outbox.sqlite"));
+    expect(Archive.countEvents(outbox)).toBe(2);
+    expect(Archive.readCursor(outbox, laptop.id)).toBe(2);
   });
 });

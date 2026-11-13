@@ -45,11 +45,15 @@ export const mergeFleetEntries = (
   return merged;
 };
 
-/** What a machine whose entry is `current` lacks of `decision`. */
+/**
+ * What a machine whose entry is `current` lacks of `decision`. A switch at time 0 is the default
+ * no one has flipped since sharing began, so it is never sent.
+ */
 export const fleetEntryBehind = (
   current: PluginFleetEntry | undefined,
   decision: PluginFleetEntry,
 ) => ({
   files: current === undefined || compareFleetFiles(decision, current) > 0,
-  switch: current === undefined || compareFleetSwitch(decision, current) > 0,
+  switch:
+    decision.enabledAt > 0 && (current === undefined || compareFleetSwitch(decision, current) > 0),
 });

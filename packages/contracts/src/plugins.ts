@@ -145,6 +145,8 @@ export const PluginState = Schema.Struct({
    * manifest still loads without them.
    */
   unknownManifestKeys: Schema.optionalKey(Schema.Array(Schema.String)),
+  /** Why the user's other machines can't get a copy, such as a folder over the upload limits. */
+  sharingProblem: Schema.optionalKey(Schema.String),
 });
 export type PluginState = typeof PluginState.Type;
 
@@ -188,6 +190,8 @@ export const PluginFleet = Schema.Struct({
   sharing: Schema.Boolean,
   /** One per plugin this machine has, or removed since it shared. */
   entries: ForwardCompatibleArray(PluginFleetEntry),
+  /** Plugins the user keeps off this machine while the others share them. */
+  keptOff: Schema.Array(PluginId),
 });
 export type PluginFleet = typeof PluginFleet.Type;
 
@@ -209,6 +213,16 @@ export type PluginFleetApplyInput = typeof PluginFleetApplyInput.Type;
 /** `applied` is false when the machine already had the entry or something newer. */
 export const PluginFleetApplyResult = Schema.Struct({ applied: Schema.Boolean });
 export type PluginFleetApplyResult = typeof PluginFleetApplyResult.Type;
+
+/**
+ * Keeps a plugin off this machine, removing it and its data here only, or lets it come back. The
+ * user's other machines keep it either way.
+ */
+export const PluginFleetSetKeptOffInput = Schema.Struct({
+  pluginId: PluginId,
+  keptOff: Schema.Boolean,
+});
+export type PluginFleetSetKeptOffInput = typeof PluginFleetSetKeptOffInput.Type;
 
 export const PluginFleetSetSharingInput = Schema.Struct({ sharing: Schema.Boolean });
 export type PluginFleetSetSharingInput = typeof PluginFleetSetSharingInput.Type;

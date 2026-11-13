@@ -163,6 +163,11 @@ describe("command permissions", () => {
     { method: WS_METHODS.pluginsLink, scope: AuthSettingsWriteScope },
     { method: WS_METHODS.pluginsUninstall, scope: AuthSettingsWriteScope },
     { method: WS_METHODS.pluginsSettingsUpdate, scope: AuthSettingsWriteScope },
+    // Copying plugins between machines installs, runs or removes their code.
+    { method: WS_METHODS.pluginsCreateDownloadUrl, scope: AuthSettingsWriteScope },
+    { method: WS_METHODS.pluginsFleetApply, scope: AuthSettingsWriteScope },
+    { method: WS_METHODS.pluginsFleetSetSharing, scope: AuthSettingsWriteScope },
+    { method: WS_METHODS.pluginsFleetSetKeptOff, scope: AuthSettingsWriteScope },
   ])("requires the destination $scope grant for $method", ({ method, scope }) =>
     Effect.gen(function* () {
       const registry = yield* setup;

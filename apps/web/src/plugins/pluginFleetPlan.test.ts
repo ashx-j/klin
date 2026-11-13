@@ -13,10 +13,14 @@ const entry = (overrides: Partial<PluginFleetEntry> = {}): PluginFleetEntry => (
   enabledAt: 0,
   ...overrides,
 });
-const sharing = (id: string, entries: ReadonlyArray<PluginFleetEntry>): FleetMachine => ({
+const sharing = (
+  id: string,
+  entries: ReadonlyArray<PluginFleetEntry>,
+  keptOff: ReadonlyArray<PluginId> = [],
+): FleetMachine => ({
   environmentId: EnvironmentId.make(id),
   label: id,
-  status: { kind: "sharing", plugins: [], entries },
+  status: { kind: "sharing", plugins: [], entries, keptOff: new Set(keptOff) },
 });
 const away = (id: string, kind: "offline" | "left-out" | "unavailable"): FleetMachine => ({
   environmentId: EnvironmentId.make(id),
@@ -58,6 +62,17 @@ describe("planFleetSync", () => {
       { kind: "apply", to: "pc", entry: removed },
       { kind: "apply", to: "new", entry: removed },
     ]);
+  });
+
+  it("records a later time for the same files without copying, and skips kept-off machines", () => {
+    const relabelled = entry({ filesAt: 200 });
+    expect(
+      planFleetSync([
+        sharing("pc", [entry()]),
+        sharing("homeserver", [relabelled]),
+        sharing("thinkpad2", [], [notes]),
+      ]),
+    ).toEqual([{ kind: "apply", to: "pc", entry: relabelled }]);
   });
 
   it("does nothing until two machines share", () => {

@@ -17,6 +17,8 @@ export interface FleetMachine {
         readonly kind: "sharing";
         readonly plugins: ReadonlyArray<PluginState>;
         readonly entries: ReadonlyArray<PluginFleetEntry>;
+        /** Plugins the user keeps off this machine, which it neither gets nor gives. */
+        readonly keptOff: ReadonlySet<PluginId>;
       };
 }
 
@@ -45,8 +47,9 @@ const fleetDecisions = (machines: ReadonlyArray<FleetMachine>) =>
 
 /**
  * What brings every sharing machine to the newest decisions. Newer files come from a machine whose
- * entry is that decision, which therefore has them; a machine with nothing for a removed plugin
- * still records the removal, so it carries it to machines it meets later.
+ * entry is that decision, which therefore has them; a machine with the same files only records the
+ * later time, and one with nothing for a removed plugin still records the removal, so it carries
+ * it to machines it meets later.
  */
 export function planFleetSync(machines: ReadonlyArray<FleetMachine>): ReadonlyArray<FleetAction> {
   const sharing = machines.flatMap((machine) => {
@@ -57,6 +60,7 @@ export function planFleetSync(machines: ReadonlyArray<FleetMachine>): ReadonlyAr
           {
             environmentId: machine.environmentId,
             entries: new Map(status.entries.map((entry) => [entry.pluginId, entry])),
+            keptOff: status.keptOff,
           },
         ];
   });
@@ -68,8 +72,10 @@ export function planFleetSync(machines: ReadonlyArray<FleetMachine>): ReadonlyAr
       return entry !== undefined && !fleetEntryBehind(entry, decision).files;
     });
     for (const machine of sharing) {
-      const behind = fleetEntryBehind(machine.entries.get(decision.pluginId), decision);
-      if (behind.files && decision.revision !== null) {
+      if (machine.keptOff.has(decision.pluginId)) continue;
+      const current = machine.entries.get(decision.pluginId);
+      const behind = fleetEntryBehind(current, decision);
+      if (behind.files && decision.revision !== null && current?.revision !== decision.revision) {
         if (source !== undefined && source.environmentId !== machine.environmentId) {
           actions.push({
             kind: "copy",
@@ -89,7 +95,7 @@ export function planFleetSync(machines: ReadonlyArray<FleetMachine>): ReadonlyAr
 export type FleetPlacement =
   | { readonly kind: "here"; readonly plugin: PluginState | undefined }
   | { readonly kind: "pending"; readonly problem: string | undefined }
-  | { readonly kind: "offline" | "unavailable" | "left-out" };
+  | { readonly kind: "offline" | "unavailable" | "left-out" | "kept-off" };
 
 /**
  * Where a plugin is across the user's machines, for its row in Settings. `problems` holds why an
@@ -111,6 +117,7 @@ export function placementsOf(
     }> => {
       const status = machine.status;
       if (status.kind !== "sharing") return [{ machine, placement: { kind: status.kind } }];
+      if (status.keptOff.has(pluginId)) return [{ machine, placement: { kind: "kept-off" } }];
       const action = actions.find(
         (candidate) =>
           candidate.to === machine.environmentId && candidate.entry.pluginId === pluginId,

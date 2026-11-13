@@ -7,6 +7,7 @@ import { type FleetPlacement, placementsOf } from "../../../plugins/pluginFleetP
 import { pluginEnvironment } from "../../../state/plugins";
 import { useEnvironments } from "../../../state/environments";
 import { useAtomCommand } from "../../../state/use-atom-command";
+import { Button } from "../../ui/button";
 import { Switch } from "../../ui/switch";
 import { settingsScopeEnvironmentLabel } from "../settingsScopeAxis";
 import { SettingsRow } from "../settingsLayout";
@@ -24,7 +25,7 @@ export function PluginSharingRow({ environmentId }: { readonly environmentId: En
       description={
         fleet.sharing
           ? "Installing, updating, turning on or off, or removing a plugin here does the same on every machine this app connects to that shares plugins, and the same from them. Settings stay on each machine."
-          : "This machine keeps its own plugins. Changes on your other machines don't reach it, and its changes don't reach them."
+          : "This machine keeps its own plugins, and changes stop going to and from it. Turned back on, changes made here meanwhile go out too, removals included."
       }
       control={
         <Switch
@@ -45,9 +46,11 @@ const placementText = (placement: FleetPlacement) => {
     case "pending":
       return placement.problem === undefined ? "copying" : `not copied: ${placement.problem}`;
     case "offline":
-      return "gets it when it connects";
+      return "offline, catches up when it connects";
     case "left-out":
       return "doesn't share plugins";
+    case "kept-off":
+      return "kept off";
     case "unavailable":
       return undefined;
   }
@@ -73,9 +76,10 @@ export function PluginPlacements({
   const machines = useAtomValue(fleetMachinesAtom);
   const problems = useAtomValue(fleetProblemsAtom);
   const { environments } = useEnvironments();
+  const setKeptOff = useAtomCommand(pluginEnvironment.setPluginKeptOff, "plugin kept off");
   // Tells apart machines with the same name, as the scope picker at the top does.
-  const labelOf = (environmentId: EnvironmentId, label: string) => {
-    const environment = environments.find((entry) => entry.environmentId === environmentId);
+  const labelOf = (machineId: EnvironmentId, label: string) => {
+    const environment = environments.find((entry) => entry.environmentId === machineId);
     return environment === undefined
       ? label
       : settingsScopeEnvironmentLabel(environment, environments);
@@ -86,22 +90,47 @@ export function PluginPlacements({
     const text = placementText(placement);
     return text === undefined ? [] : [{ machine, placement, text }];
   });
-  if (lines.length < 2) return null;
   return (
-    <span className="block">
-      On your machines:
-      {lines.map(({ machine, placement, text }) => (
-        <span
-          key={machine.environmentId}
-          className={
-            placement.kind === "pending" && placement.problem !== undefined
-              ? "block text-destructive"
-              : "block"
-          }
-        >
-          {labelOf(machine.environmentId, machine.label)}: {text}
+    <>
+      {plugin.sharingProblem === undefined ? null : (
+        <span className="block text-destructive">
+          Not copied to your other machines: {plugin.sharingProblem}
         </span>
-      ))}
-    </span>
+      )}
+      {lines.length < 2 ? null : (
+        <span className="block">
+          On your machines:
+          {lines.map(({ machine, placement, text }) => (
+            <span
+              key={machine.environmentId}
+              className={
+                placement.kind === "pending" && placement.problem !== undefined
+                  ? "block text-destructive"
+                  : "block"
+              }
+            >
+              {labelOf(machine.environmentId, machine.label)}: {text}
+              {placement.kind === "kept-off" ? (
+                <>
+                  {" "}
+                  <Button
+                    size="micro"
+                    variant="link"
+                    onClick={() =>
+                      void setKeptOff({
+                        environmentId: machine.environmentId,
+                        input: { pluginId: plugin.id, keptOff: false },
+                      })
+                    }
+                  >
+                    Add back
+                  </Button>
+                </>
+              ) : null}
+            </span>
+          ))}
+        </span>
+      )}
+    </>
   );
 }

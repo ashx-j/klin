@@ -109,6 +109,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.pluginsCreateDownloadUrl]: "plugins",
   [WS_METHODS.pluginsFleetApply]: "plugins",
   [WS_METHODS.pluginsFleetSetSharing]: "plugins",
+  [WS_METHODS.pluginsFleetSetKeptOff]: "plugins",
   [WS_METHODS.scheduledTasksSubscribe]: "scheduledTasks",
   [WS_METHODS.scheduledTasksUpsert]: "scheduledTasks",
   [WS_METHODS.scheduledTasksSetEnabled]: "scheduledTasks",

@@ -142,6 +142,7 @@ const make = Effect.gen(function* () {
   // Unused URLs by nonce, with when each expires. A restart forgets them, which only refuses more.
   const unused = new Map<string, number>();
 
+  // Inside the span of the request that signs a URL.
   const sign = Effect.fnUntraced(function* (
     claims: (nonce: string, expiresAt: number) => UploadClaims,
   ) {

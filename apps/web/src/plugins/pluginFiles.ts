@@ -159,7 +159,16 @@ export async function copyPlugin(
     ),
   );
   if (minted.revision !== entry.revision) {
-    throw new Error("The plugin changed on the machine it is copied from. It will copy again.");
+    // A rescan records an installed copy's new files as a newer change, which then copies itself.
+    await runAtomCommand(
+      appAtomRegistry,
+      pluginEnvironment.rescanPlugins,
+      { environmentId: from, input: {} },
+      { reportFailure: false },
+    );
+    throw new Error(
+      "Its files changed on the machine it is copied from since they were shared. A linked folder shares its changes when you choose Reload there.",
+    );
   }
   const response = await fetch(url);
   if (!response.ok) {

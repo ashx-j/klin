@@ -3,6 +3,7 @@ import {
   AuthSettingsWriteScope,
   type PluginFailure,
   type PluginFleet,
+  type PluginId,
   type PluginManifest,
   type PluginListResult,
   type PluginState,
@@ -55,6 +56,7 @@ const toState = (
   record: PluginRecord,
   config: PluginsConfigFile,
   serverFailure: string | undefined,
+  sharingProblem: string | undefined,
 ): PluginState => {
   const manifest = manifestOf(record.plugin);
   const { id } = record.plugin;
@@ -80,6 +82,7 @@ const toState = (
     hasWeb: manifest?.web !== undefined,
     hasSettings: manifest?.settingsSchema !== undefined,
     ...(serverFailure === undefined ? {} : { serverFailure }),
+    ...(sharingProblem === undefined ? {} : { sharingProblem }),
     ...("unknownKeys" in record.plugin && record.plugin.unknownKeys !== undefined
       ? { unknownManifestKeys: record.plugin.unknownKeys }
       : {}),
@@ -94,6 +97,7 @@ export const makePluginStates = Effect.fn("PluginStates.make")(function* (input:
   readonly records: Ref.Ref<ReadonlyArray<PluginRecord>>;
   readonly config: Effect.Effect<PluginsConfigFile>;
   readonly failures: PluginFailures;
+  readonly sharingProblem: (pluginId: PluginId) => string | undefined;
 }) {
   const { records, failures } = input;
   const environmentThemes = yield* EnvironmentTheme.EnvironmentThemeService;
@@ -108,7 +112,12 @@ export const makePluginStates = Effect.fn("PluginStates.make")(function* (input:
     const failureOf = yield* failures.current;
     return {
       states: all.map((record) =>
-        toState(record, config, failureOf(record.plugin.id, record.revision)),
+        toState(
+          record,
+          config,
+          failureOf(record.plugin.id, record.revision),
+          input.sharingProblem(record.plugin.id),
+        ),
       ),
       fleet: fleetOf(config),
     };
@@ -120,7 +129,7 @@ export const makePluginStates = Effect.fn("PluginStates.make")(function* (input:
   // What the last publish sent, starting from the empty list clients get before any. Settings
   // rescans on every visit, and a list sent again would make every client stream rebuild what it
   // already shows.
-  let published: Published = { states: [], fleet: { sharing: true, entries: [] } };
+  let published: Published = { states: [], fleet: { sharing: true, entries: [], keptOff: [] } };
   // The copies whose theme folders the theme service last got, which reads every folder each time.
   // A reload discovers its plugin afresh, so the new copy's themes are read again.
   let themed: ReadonlyArray<DiscoveredPlugin> = [];

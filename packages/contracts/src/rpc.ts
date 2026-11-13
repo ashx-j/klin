@@ -393,6 +393,7 @@ import {
   PluginError,
   PluginFleetApplyInput,
   PluginFleetApplyResult,
+  PluginFleetSetKeptOffInput,
   PluginFleetSetSharingInput,
   PluginInvokeInput,
   PluginInvokeResult,
@@ -603,6 +604,7 @@ export const WS_METHODS = {
   pluginsCreateDownloadUrl: "plugins.createDownloadUrl",
   pluginsFleetApply: "plugins.fleet.apply",
   pluginsFleetSetSharing: "plugins.fleet.setSharing",
+  pluginsFleetSetKeptOff: "plugins.fleet.setKeptOff",
 
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
   cloudInstallRelayClient: "cloud.installRelayClient",
@@ -2217,6 +2219,12 @@ const WsPluginsFleetSetSharingRpc = Rpc.make(WS_METHODS.pluginsFleetSetSharing, 
   error: PluginRpcError,
 });
 
+const WsPluginsFleetSetKeptOffRpc = Rpc.make(WS_METHODS.pluginsFleetSetKeptOff, {
+  payload: PluginFleetSetKeptOffInput,
+  success: PluginFleetSetKeptOffInput,
+  error: PluginRpcError,
+});
+
 const WsSubscribeAuthAccessRpc = Rpc.make(WS_METHODS.subscribeAuthAccess, {
   payload: Schema.Struct({}),
   success: AuthAccessStreamEvent,
@@ -2320,6 +2328,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsPluginsCreateDownloadUrlRpc,
   WsPluginsFleetApplyRpc,
   WsPluginsFleetSetSharingRpc,
+  WsPluginsFleetSetKeptOffRpc,
   WsServerReportClientActivityRpc,
   WsCloudGetRelayClientStatusRpc,
   WsCloudInstallRelayClientRpc,

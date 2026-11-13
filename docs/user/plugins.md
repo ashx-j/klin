@@ -26,7 +26,8 @@ plugin's row names both.
 
 To load a plugin from a folder on the environment's machine without copying it, such as one you're
 building, choose **Add plugin**, open **Link a plugin folder** and enter the folder's path. **Reload**
-then runs its latest files.
+then runs its latest files. Linking a folder in place of an installed copy keeps the plugin's switch,
+settings and data, and dropping a folder in place of a linked one does the same.
 
 **Settings → Plugins** shows one environment at a time, the main one until you pick another at the
 top of the page.
@@ -35,28 +36,38 @@ top of the page.
 
 Installing, updating, turning on or off, or removing a plugin on one of your machines does the same
 on the others. This covers plugins you drop in, link from a folder or copy into the `plugins`
-folder by hand. A machine gets a linked plugin as an installed copy, and gets each new version when
-you choose **Reload** where it is linked. Settings, secrets and stored data stay on each machine.
+folder by hand. A linked plugin reaches your other machines as an installed copy when you link it,
+and again each time you choose **Reload** where it is linked, so an edit in progress stays on its
+machine. Settings, secrets and stored data stay on each machine, and `.env` files in a plugin's
+folder are never copied.
 
 The app does the copying. Whenever it is connected to two of your machines, it brings each one up
-to the newest change made on any of them. A machine that is offline keeps what it has and catches
-up the next time the app connects to it, as does a machine you connect for the first time. Its own
-plugins then reach your other machines too. When the same plugin changed on two machines while
-they were apart, the later change wins, and a plugin's version and its switch are decided
-separately.
+to the newest change made on any of them, and looks again at each machine's `plugins` folder when it
+connects. A machine that is offline keeps what it has and catches up the next time the app connects
+to it, as does a machine you connect for the first time. Its own plugins then reach your other
+machines too. When the same plugin changed on two machines while they were apart, the change with
+the newer files wins, and a plugin's version and its switch are decided separately. A copy that
+fails is tried again after a while, and again when the app reconnects to that machine.
 
-A plugin's row says how it is on each machine, such as on, off, waiting for the machine to connect,
-or why it couldn't be copied there. A machine that can't run a plugin's server code, such as one
-whose T3 Code server runs on Node older than 24, still gets the plugin, and its row there says why
-it doesn't run. Its themes, styles and web part still work from that machine. A machine whose T3
-Code is too old for a plugin doesn't get it until it is updated.
+A plugin's row says how it is on each machine, such as on, off, offline, kept off, or why it
+couldn't be copied there. A machine that can't run a plugin's server code, such as one whose T3
+Code server runs on Node older than 24, still gets the plugin, and its row there says why it doesn't
+run. Its themes, styles and web part still work from that machine. A machine whose T3 Code is too
+old for a plugin doesn't get it until it is updated. A plugin folder over 1,000 files or 25 MB isn't
+copied, and its row says so.
 
-Turning a plugin on turns it on on every machine. A new plugin still arrives turned off everywhere,
-so turning it on is where you approve running its code on all of them. Removing a plugin removes it
-from every machine, with its settings, secrets and stored data on each.
+A plugin arrives turned off on a machine that didn't have it. Turning it on or off anywhere then
+does the same everywhere, so turning it on is where you approve running its code on all your
+machines. How plugins were switched before sharing began stays on each machine until you flip them.
 
-To keep one machine out, open **Settings → Plugins** for it and turn off **Share plugins with my
-other machines**. It keeps the plugins it has, and changes stop going to and from it. Only the
+To take a plugin off one machine only, choose **Remove** on its row there and then **Remove here
+only**. Your other machines keep it, and its row on them shows the machine as kept off, with **Add
+back** to copy it there again. **Remove everywhere** removes it from every machine, with its
+settings, secrets and stored data on each.
+
+To keep a whole machine out, open **Settings → Plugins** for it and turn off **Share plugins with my
+other machines**. It keeps the plugins it has, and changes stop going to and from it. When you turn
+it back on, changes made on it meanwhile go to your other machines too, removals included. Only the
 machines this app manages plugins on take part, so a server you reach as a guest never gets your
 plugins and never sends you its own.
 

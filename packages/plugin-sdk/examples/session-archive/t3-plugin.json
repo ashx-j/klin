@@ -16,7 +16,7 @@
       "hubUrl": {
         "type": "string",
         "title": "Hub address",
-        "description": "The hub's address, such as http://homeserver:4790. Other machines send their events there, and the hub listens on its port. Leave it empty on a hub that only archives its own events.",
+        "description": "The hub's address, best its Tailscale IP, such as http://100.64.0.1:4790. Other machines send their events there, and the hub listens on that IP and port. Leave it empty on a hub that only archives its own events.",
         "pattern": "^$|^http://"
       },
       "key": {
@@ -31,7 +31,7 @@
   "permissions": [
     "Reads every orchestration event this machine stores: prompts, replies, reasoning, tool calls and subagents.",
     "On the hub, writes those events to the archive file set in Archive file.",
-    "On the hub, listens on the port in Hub address on every network interface.",
+    "On the hub, listens on the port in Hub address: only at its host when that is an IP address, otherwise on every network interface.",
     "On other machines, sends their events to the hub at Hub address."
   ]
 }

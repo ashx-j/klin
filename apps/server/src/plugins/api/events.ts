@@ -14,6 +14,9 @@ import type { FacadeContext } from "./facade.ts";
 const DEFAULT_BATCH_SIZE = 100;
 const MAX_BATCH_SIZE = 500;
 const MAX_TYPES = 64;
+// One read covers at most this many sequences, so a filter that matches rarely never scans the
+// whole table in one query.
+const MAX_SCAN_SEQUENCES = 10_000;
 // Payloads hold whole tool outputs, so a batch also stops by size and its memory stays bounded.
 const MAX_BATCH_CHARS = 4 * 1024 * 1024;
 
@@ -81,11 +84,20 @@ export const makeEventsApi = (
         let reported = cursor;
         const nextBatch = Effect.gen(function* () {
           while (true) {
-            const rows = yield* eventStore.readStoredRows({
-              afterSequence: cursor,
-              limit: batchSize,
-              ...(types === undefined ? {} : { eventTypes: types }),
-            });
+            // Every row up to the head is committed, so a page that ends short covers the whole
+            // range it read. The cursor then passes rows `types` left out instead of reading them
+            // again after each commit, and each read covers a bounded range.
+            const head = yield* eventStore.latestApplicationSequence;
+            const through = Math.min(head, cursor + MAX_SCAN_SEQUENCES);
+            const rows =
+              through <= cursor
+                ? []
+                : yield* eventStore.readStoredRows({
+                    afterSequence: cursor,
+                    throughSequence: through,
+                    limit: batchSize,
+                    ...(types === undefined ? {} : { eventTypes: types }),
+                  });
             // Read after the rows: a prune between the two reads is reported, never missed.
             const prunedThrough = yield* eventStore.prunedThroughSequence;
             const missed =
@@ -100,13 +112,16 @@ export const makeEventsApi = (
               if (events.length > 0 && chars > MAX_BATCH_CHARS) break;
               events.push(toPluginEvent(row));
             }
-            const last = events.at(-1);
-            if (last !== undefined) cursor = last.sequence;
+            cursor =
+              events.length === rows.length && rows.length < batchSize
+                ? Math.max(cursor, through)
+                : (events.at(-1)?.sequence ?? cursor);
             if (events.length > 0 || missed !== undefined) {
               const batch: PluginStoredEventBatch =
                 missed === undefined ? { events } : { events, missed };
               return batch;
             }
+            if (cursor < head) continue;
             yield* Queue.take(wake);
           }
         });

@@ -271,10 +271,13 @@ const make = Effect.gen(function* () {
   const hostScope = yield* Effect.scope;
 
   const failures = yield* makePluginFailures;
+  // Why each plugin can't be copied to the user's other machines, from the last discovery.
+  const sharingProblems = new Map<PluginId, string>();
   const pluginStates = yield* makePluginStates({
     records,
     config: pluginsConfig.current,
     failures,
+    sharingProblem: (pluginId) => sharingProblems.get(pluginId),
   });
   const currentStates = pluginStates.current;
   const publishStates = pluginStates.publish;
@@ -542,30 +545,50 @@ const make = Effect.gen(function* () {
     initialRecord(plugin, found).status === "loading";
 
   const revisionOf = makeRevisionCache();
-  // A plugin whose files can't be read or are too large to copy is left out of sharing.
+  /**
+   * A linked folder is shared only when it is linked or reloaded (`restart`), so a half-made edit
+   * stays on its machine until the developer asks for it to run, and then gets the current time.
+   */
   const recordFleetChanges = Effect.fn("PluginHost.recordFleetChanges")(function* (
     plugins: ReadonlyArray<DiscoveredPlugin>,
     complete: boolean,
+    restart: PluginId | undefined,
   ) {
+    const now = yield* Clock.currentTimeMillis;
+    const ledger = (yield* pluginsConfig.current).fleet?.entries ?? {};
+    for (const pluginId of sharingProblems.keys()) {
+      if (!plugins.some((plugin) => plugin.id === pluginId)) sharingProblems.delete(pluginId);
+    }
     const found = yield* Effect.forEach(plugins, (plugin) => {
       const manifest = manifestOf(plugin);
       if (manifest === undefined) return Effect.succeed([]);
+      const linked = plugin.source === "dev";
+      const shared = ledger[plugin.id];
+      if (linked && plugin.id !== restart && shared !== undefined && shared.revision !== null) {
+        return Effect.succeed([]);
+      }
+      sharingProblems.delete(plugin.id);
       return revisionOf(plugin.rootDir).pipe(
         Effect.provideService(FileSystem.FileSystem, fs),
         Effect.provideService(Path.Path, path),
         Effect.map((folder): ReadonlyArray<FoundPlugin> => [
-          { pluginId: plugin.id, version: manifest.version, ...folder },
+          {
+            pluginId: plugin.id,
+            version: manifest.version,
+            revision: folder.revision,
+            modifiedAt: linked ? now : folder.modifiedAt,
+          },
         ]),
         Effect.catchTags({
           PluginFolderUnsharableError: (error) =>
-            Effect.logInfo("plugin left out of sharing", {
-              pluginId: plugin.id,
-              reason: error.reason,
-            }).pipe(Effect.as([])),
+            Effect.sync(() => {
+              sharingProblems.set(plugin.id, error.reason);
+              return [];
+            }),
         }),
       );
     }).pipe(Effect.map((lists) => lists.flat()));
-    const record = (config: PluginsConfigFile, now: number) =>
+    const record = (config: PluginsConfigFile) =>
       recordLocalChanges({
         config,
         found,
@@ -573,13 +596,15 @@ const make = Effect.gen(function* () {
         complete,
         now,
       });
-    const now = yield* Clock.currentTimeMillis;
-    if (record(yield* pluginsConfig.current, now) === undefined) return;
-    yield* pluginsConfig.write((latest) => record(latest, now) ?? latest);
+    if (record(yield* pluginsConfig.current) === undefined) return;
+    yield* pluginsConfig.write((latest) => record(latest) ?? latest);
   });
 
   // Startup tolerates an unreadable plugins.json; an explicit reload reports it instead.
-  const discover = Effect.fn("PluginHost.discover")(function* (lenient: boolean) {
+  const discover = Effect.fn("PluginHost.discover")(function* (
+    lenient: boolean,
+    restart?: PluginId,
+  ) {
     const current = yield* pluginsConfig.reread(lenient);
     const { plugins, complete } = yield* discoverPlugins({
       pluginsDir,
@@ -602,7 +627,7 @@ const make = Effect.gen(function* () {
     if (complete) {
       yield* tolerated(pluginsConfig.forgetMissing(new Set(plugins.map((plugin) => plugin.id))));
     }
-    yield* tolerated(recordFleetChanges(plugins, complete));
+    yield* tolerated(recordFleetChanges(plugins, complete, restart));
     const found: Found = { enabled: current.enabled ?? {}, crashed: current.crashed ?? {} };
     return { plugins, found };
   });
@@ -650,7 +675,7 @@ const make = Effect.gen(function* () {
   const rediscover = Effect.fn("PluginHost.rediscover")(function* (restart: PluginId | undefined) {
     // Reloading a plugin that stopped the server clears that failure; it stays off until turned on.
     if (restart !== undefined) yield* pluginsConfig.clearCrash(restart);
-    const { plugins, found } = yield* discover(false);
+    const { plugins, found } = yield* discover(false, restart);
     if (restart !== undefined) yield* stopPlugin(restart);
     const known = yield* Ref.get(records);
     const next = plugins.map((plugin) => ({

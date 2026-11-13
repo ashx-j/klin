@@ -46,6 +46,8 @@ const PluginsConfigFile = Schema.StructWithRest(
         /** Absent means on. */
         sharing: Schema.optionalKey(Schema.Boolean),
         entries: Schema.optionalKey(Schema.Record(Schema.String, StoredFleetEntry)),
+        /** Plugins the user keeps off this machine; its copies of them are its own. */
+        keptOff: Schema.optionalKey(Schema.Array(Schema.String)),
       }),
     ),
   }),

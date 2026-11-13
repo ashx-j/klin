@@ -42,6 +42,7 @@ export function PluginRow({
   const setEnabled = useAtomCommand(pluginEnvironment.setPluginEnabled, "plugin enabled");
   const reload = useAtomCommand(pluginEnvironment.reloadPlugin, "plugin reload");
   const uninstall = useAtomCommand(pluginEnvironment.uninstallPlugin, "plugin removal");
+  const keepOff = useAtomCommand(pluginEnvironment.setPluginKeptOff, "plugin removal");
   const [busy, setBusy] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const customSettings = useAtomValue(
@@ -149,6 +150,11 @@ export function PluginRow({
               onRemove={() =>
                 whileBusy(() => uninstall({ environmentId, input: { pluginId: plugin.id } }))
               }
+              onRemoveHereOnly={() =>
+                whileBusy(() =>
+                  keepOff({ environmentId, input: { pluginId: plugin.id, keptOff: true } }),
+                )
+              }
             />
           )}
           <Switch
@@ -193,6 +199,7 @@ function RemovePluginPopover({
   folder,
   disabled,
   onRemove,
+  onRemoveHereOnly,
 }: {
   readonly name: string;
   /** Whether this machine shares plugins, so the removal reaches the user's other machines. */
@@ -202,6 +209,8 @@ function RemovePluginPopover({
   readonly folder: string | undefined;
   readonly disabled: boolean;
   readonly onRemove: () => Promise<unknown>;
+  /** Keeps it off this machine only; the user's other machines keep it. */
+  readonly onRemoveHereOnly: () => Promise<unknown>;
 }) {
   const label = unlink ? "Unlink" : "Remove";
   return (
@@ -227,20 +236,30 @@ function RemovePluginPopover({
           )}
           <p className="text-muted-foreground text-xs">
             {shared
-              ? "It is also removed from every machine that shares plugins, with its settings, secrets and stored data on each. This can't be undone."
+              ? "Removing it everywhere also removes it from every machine that shares plugins, with its settings, secrets and stored data on each. Removing it here only keeps it on the others, and its row there can add it back. Neither can be undone for its data."
               : "This also deletes its settings, secrets and stored data, and can't be undone."}
           </p>
-          <div className="flex justify-end gap-2">
+          <div className="flex flex-wrap justify-end gap-2">
             <PopoverClose render={<Button size="sm" variant="ghost" disabled={disabled} />}>
               Cancel
             </PopoverClose>
+            {shared ? (
+              <Button
+                size="sm"
+                variant="destructive-outline"
+                disabled={disabled}
+                onClick={() => void onRemoveHereOnly()}
+              >
+                {label} here only
+              </Button>
+            ) : null}
             <Button
               size="sm"
               variant="destructive"
               disabled={disabled}
               onClick={() => void onRemove()}
             >
-              {label} {name}
+              {label} {shared ? "everywhere" : name}
             </Button>
           </div>
         </div>

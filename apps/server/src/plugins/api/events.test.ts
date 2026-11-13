@@ -1,6 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import { CommandId, EventId, PluginId, ProjectId } from "@t3tools/contracts";
 import type { PluginStoredEventBatch } from "@t3tools/plugin-sdk/server";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -44,11 +45,18 @@ const append = Effect.fn(function* (
   return stored.sequence;
 });
 
-/** The feed as a plugin gets it, with the activation that disabling it would end. */
+type Store = OrchestrationEventStore.OrchestrationEventStore["Service"];
+
+/**
+ * The feed as a plugin gets it, with the activation that disabling it would end. `wrap` replaces
+ * store methods, such as to record what the feed reads.
+ */
 const openFeed = Effect.fn(function* (
   options: Parameters<ReturnType<typeof makeEventsApi>["stored"]>[0],
+  wrap: (store: Store) => Partial<Store> = () => ({}),
 ) {
-  const store = yield* OrchestrationEventStore.OrchestrationEventStore;
+  const real = yield* OrchestrationEventStore.OrchestrationEventStore;
+  const store: Store = { ...real, ...wrap(real) };
   const activation = makePluginActivation();
   const facade = makeFacadeContext({
     pluginId: PluginId.make("feed-test"),
@@ -108,6 +116,32 @@ layer("plugin event feed", (it) => {
     }),
   );
 
+  it.effect("passes the rows a type filter leaves out instead of reading them again", () =>
+    Effect.gen(function* () {
+      const store = yield* OrchestrationEventStore.OrchestrationEventStore;
+      const after = yield* store.latestApplicationSequence;
+      yield* append("skipped-1");
+      const headBefore = yield* append("skipped-2");
+      const readsFrom: Array<number> = [];
+      const feed = yield* openFeed(
+        { afterSequence: after, types: ["project.deleted"] },
+        (real) => ({
+          readStoredRows: (input) => {
+            readsFrom.push(input.afterSequence);
+            return real.readStoredRows(input);
+          },
+        }),
+      );
+      const waiting = yield* Effect.forkChild(feed.batch);
+      yield* append("skipped-3");
+      const deleted = yield* append("filtered-deleted", "project.deleted");
+      assert.deepStrictEqual(sequencesOf(yield* Fiber.join(waiting)), [deleted]);
+      // The first read covered everything up to the head, so no later read starts below it.
+      assert.strictEqual(readsFrom[0], after);
+      assert.isTrue(readsFrom.slice(1).every((from) => from >= headBefore));
+    }),
+  );
+
   it.effect("reports events T3 pruned before the feed read them, once", () =>
     Effect.gen(function* () {
       const store = yield* OrchestrationEventStore.OrchestrationEventStore;
@@ -130,6 +164,25 @@ layer("plugin event feed", (it) => {
       const second = yield* feed.batch;
       assert.deepStrictEqual(sequencesOf(second), [later]);
       assert.isUndefined(second.missed);
+    }),
+  );
+
+  it.effect("closes its subscription when the plugin stops, without another pull", () =>
+    Effect.gen(function* () {
+      const store = yield* OrchestrationEventStore.OrchestrationEventStore;
+      const after = yield* store.latestApplicationSequence;
+      const released = yield* Deferred.make<void>();
+      const feed = yield* openFeed({ afterSequence: after }, (real) => ({
+        subscribeCommitted: real.subscribeCommitted.pipe(
+          Effect.tap(() => Effect.addFinalizer(() => Deferred.succeed(released, undefined))),
+        ),
+      }));
+      const waiting = yield* Effect.forkChild(feed.next);
+      yield* append("wakes-it");
+      yield* Fiber.join(waiting);
+      // The plugin is busy elsewhere and never asks for the next batch.
+      feed.activation.controller.abort();
+      yield* Deferred.await(released);
     }),
   );
 

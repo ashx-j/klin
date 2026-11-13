@@ -79,6 +79,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.pluginsCreateDownloadUrl]: AuthSettingsWriteScope,
   [WS_METHODS.pluginsFleetApply]: AuthSettingsWriteScope,
   [WS_METHODS.pluginsFleetSetSharing]: AuthSettingsWriteScope,
+  [WS_METHODS.pluginsFleetSetKeptOff]: AuthSettingsWriteScope,
   [WS_METHODS.scheduledTasksRunNow]: AuthOrchestrationOperateScope,
   [WS_METHODS.scheduledTasksRotateWebhookToken]: AuthOrchestrationOperateScope,
   [ORCHESTRATION_V2_WS_METHODS.stopWorkflow]: AuthOrchestrationOperateScope,
