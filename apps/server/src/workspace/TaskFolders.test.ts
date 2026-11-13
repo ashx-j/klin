@@ -22,16 +22,20 @@ import {
 
 const threadId = ThreadId.make("thread:task-folders");
 
-/** `fileSystem` wraps the one the service uses; the test's own stays real. */
+/** `fileSystem` and `layerPath` replace what the service uses; the test's own stay real. */
 const layerFor = (
   state: TaskFoldersTestState,
   fileSystem: (real: FileSystem.FileSystem) => FileSystem.FileSystem = (real) => real,
+  layerPath: Layer.Layer<Path.Path> = NodePath.layer,
 ) =>
   layerTaskFoldersWithGit(state).pipe(
     Layer.provide(
-      Layer.effect(
-        FileSystem.FileSystem,
-        Effect.map(Effect.service(FileSystem.FileSystem), fileSystem),
+      Layer.merge(
+        Layer.effect(
+          FileSystem.FileSystem,
+          Effect.map(Effect.service(FileSystem.FileSystem), fileSystem),
+        ),
+        layerPath,
       ),
     ),
     Layer.provideMerge(
@@ -518,6 +522,33 @@ it.effect(
       assert.isNull(TaskFolders.commonAncestor(path, ["\\\\server\\one\\shop", "C:\\api"]));
     }).pipe(Effect.provide(NodePath.layerWin32)),
 );
+
+it.effect("plans around a tracked repository on another drive that the task folder leaves out", () => {
+  const state: TaskFoldersTestState = {
+    workspaceRoot: "C:\\shop",
+    trackedFolders: [
+      { path: "C:\\shop\\api", name: "api" },
+      { path: "D:\\tools", name: "tools" },
+    ],
+    thread: null,
+  };
+  const repositories = new Set(["C:\\shop\\api\\.git", "D:\\tools\\.git"]);
+  const windows = (real: FileSystem.FileSystem): FileSystem.FileSystem => ({
+    ...real,
+    exists: (target) => Effect.succeed(repositories.has(target)),
+  });
+  return Effect.gen(function* () {
+    const taskFolders = yield* TaskFolders.TaskFolders;
+
+    const plan = yield* taskFolders.plan({ projectId, repositories: [{ path: "C:\\shop\\api" }] });
+
+    assert.equal(plan?.anchor, "C:\\shop");
+    const error = yield* taskFolders
+      .plan({ projectId, repositories: [{ path: "D:\\tools" }] })
+      .pipe(Effect.flip);
+    assert.include(error.detail, "share no folder");
+  }).pipe(Effect.provide(layerFor(state, windows, NodePath.layerWin32)), Effect.scoped);
+});
 
 it.live("adds a repository to an existing task folder on the thread's branch", () =>
   withState((state) =>

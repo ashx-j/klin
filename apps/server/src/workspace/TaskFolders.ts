@@ -265,11 +265,14 @@ const make = Effect.gen(function* () {
       }
       repositories = [...selected.values()];
     }
-    const anchor = commonAncestor(path, [projectRoot, ...tracked.map((folder) => folder.path)]);
+    // Around every tracked repository where one folder holds them all, so any can be added later.
+    const anchor =
+      commonAncestor(path, [projectRoot, ...tracked.map((folder) => folder.path)]) ??
+      commonAncestor(path, [projectRoot, ...repositories.map((folder) => folder.path)]);
     if (anchor === null) {
       return yield* new TaskFolderError({
         operation: "plan",
-        detail: `The tracked repositories of project "${project.title}" share no folder with the project, for example because they are on another drive, so no worktree can hold them together.`,
+        detail: `The repositories selected for project "${project.title}" share no folder with the project, for example because one is on another drive, so no worktree can hold them together.`,
       });
     }
     return {
