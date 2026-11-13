@@ -328,10 +328,18 @@ const make = Effect.gen(function* () {
       : { refName: remoteBase.commitSha, baseRefName: `refs/remotes/${remoteBase.remoteRefName}` };
   });
 
+  // Never a link: what goes in one lands in the original.
+  const isFolderOrMissing = Effect.fnUntraced(function* (target: string) {
+    if (Option.isSome(yield* fileSystem.readLink(target).pipe(Effect.option))) return false;
+    const info = yield* fileSystem.stat(target).pipe(Effect.option);
+    return Option.isNone(info) || info.value.type === "Directory";
+  });
+
   /**
    * Stands in for a folder that is not a repository: every entry links to the original, so
    * nothing is copied, except the folders that lead to a tracked repository, which are real so a
    * worktree can sit in them. A repository is left out: a link to it would be the original checkout.
+   * Entries already there stay, and a real folder from an earlier pass gets its missing links.
    */
   const linkFolder: (
     source: string,
@@ -345,10 +353,10 @@ const make = Effect.gen(function* () {
         const entry = path.join(source, name);
         const link = path.join(target, name);
         if (name === ".git" || name === skip || trackedRepositories.includes(entry)) continue;
-        if ((yield* exists(link)) || (yield* isRepository(entry))) continue;
+        if (yield* isRepository(entry)) continue;
         if (trackedRepositories.some((repository) => isWithinRoot(path, repository, entry))) {
-          yield* linkFolder(entry, link, trackedRepositories);
-        } else {
+          if (yield* isFolderOrMissing(link)) yield* linkFolder(entry, link, trackedRepositories);
+        } else if (!(yield* exists(link))) {
           yield* fileSystem.symlink(entry, link);
         }
       }
@@ -912,7 +920,8 @@ const make = Effect.gen(function* () {
         worktreePath: taskFolder.projectPath,
         repositoryPath: taskFolder.projectRoot,
       });
-    } else if (!(yield* exists(taskFolder.projectPath))) {
+    } else {
+      // Also over a folder cleanup only partly removed: it puts back the links that went.
       const project = yield* readProject("create", taskFolder.projectId);
       const tracked = yield* Effect.filter(
         project.trackedFolders.map((folder) => path.resolve(folder.path)),

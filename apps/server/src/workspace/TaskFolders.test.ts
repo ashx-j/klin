@@ -484,11 +484,15 @@ it.live("adds a repository to an existing task folder on the thread's branch", (
 it.live("puts a task folder back with a worktree for every repository it recorded", () =>
   withState((state) =>
     Effect.gen(function* () {
-      const { path, tmp, run, repository, isLink } = yield* fixture;
+      const { fileSystem, path, tmp, run, repository, isLink } = yield* fixture;
       const taskFolders = yield* TaskFolders.TaskFolders;
+      const shop = path.join(tmp, "shop");
       const api = yield* repository("shop/services/api");
-      state.workspaceRoot = path.join(tmp, "shop");
-      state.trackedFolders = tracked(api);
+      const web = yield* repository("shop/web");
+      yield* fileSystem.writeFileString(path.join(shop, "AGENTS.md"), "rules\n");
+      yield* fileSystem.writeFileString(path.join(shop, "services", "README.md"), "services\n");
+      state.workspaceRoot = shop;
+      state.trackedFolders = tracked(api, web);
       const { taskFolder } = yield* create("feature");
       const root = taskFolder.root;
       const restore = taskFolders.restore({
@@ -497,9 +501,22 @@ it.live("puts a task folder back with a worktree for every repository it recorde
           run(checkout.repositoryPath, "worktree", "add", checkout.worktreePath, "feature"),
       });
 
+      // Cleanup keeps a repository with uncommitted work, and the folders that hold it.
+      yield* fileSystem.writeFileString(path.join(root, "services", "api", "a.md"), "draft\n");
+      yield* taskFolders.remove({ root, force: false, forget: false });
+      assert.isFalse(yield* fileSystem.exists(path.join(root, "AGENTS.md")));
+      yield* restore;
+      for (const entry of ["AGENTS.md", path.join("services", "README.md")]) {
+        assert.equal(yield* fileSystem.readLink(path.join(root, entry)), path.join(shop, entry));
+      }
+      assert.equal(
+        yield* run(path.join(root, "web"), "symbolic-ref", "--short", "HEAD"),
+        "feature",
+      );
+
       // Cleanup keeps the record of a folder it removes; the project then stops tracking `api`.
       yield* taskFolders.remove({ root, force: true, forget: false });
-      state.trackedFolders = [];
+      state.trackedFolders = tracked(web);
       yield* restore;
 
       assert.isFalse(yield* isLink(path.join(root, "services")));
