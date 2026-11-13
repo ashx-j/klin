@@ -47,6 +47,7 @@ export const ProjectScript = Schema.Struct({
 export type ProjectScript = typeof ProjectScript.Type;
 
 export const PROJECT_TRACKED_FOLDERS_MAX = 128;
+export const PROJECT_TRACKED_FOLDER_NAME_MAX = 128;
 
 /**
  * A folder the project works in besides its home folder. Paths are absolute and only mean
@@ -54,7 +55,7 @@ export const PROJECT_TRACKED_FOLDERS_MAX = 128;
  */
 export const ProjectTrackedFolder = Schema.Struct({
   path: TrimmedNonEmptyString,
-  name: TrimmedNonEmptyString.check(Schema.isMaxLength(128)),
+  name: TrimmedNonEmptyString.check(Schema.isMaxLength(PROJECT_TRACKED_FOLDER_NAME_MAX)),
 });
 export type ProjectTrackedFolder = typeof ProjectTrackedFolder.Type;
 

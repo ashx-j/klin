@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
+  PROJECT_TRACKED_FOLDER_NAME_MAX,
   PROJECT_TRACKED_FOLDERS_MAX,
   ProjectId,
   type ProjectTrackedFolder,
@@ -83,6 +84,7 @@ it.layer(NodeServices.layer)("WorkspaceFolders", (it) => {
         path.join(root, ".gitmodules"),
         '[submodule "sub"]\n\tpath = sub\n\turl = https://example.test/sub.git\n',
       );
+      const longName = "API".repeat(50);
       // Missing folders never use up the limit.
       const gone = Array.from(
         { length: PROJECT_TRACKED_FOLDERS_MAX },
@@ -93,7 +95,7 @@ it.layer(NodeServices.layer)("WorkspaceFolders", (it) => {
         `{
           // Editors write comments and trailing commas here.
           "folders": [
-            { "path": "api", "name": "API" },
+            { "path": "api", "name": "${longName}" },
             { "path": "notes" },
             { "path": "../outside" },
             ${gone}
@@ -110,7 +112,8 @@ it.layer(NodeServices.layer)("WorkspaceFolders", (it) => {
         folders: [
           {
             path: path.join(root, "api"),
-            name: "API",
+            // Names are cut to what a project can store.
+            name: longName.slice(0, PROJECT_TRACKED_FOLDER_NAME_MAX),
             isGitRepository: true,
             source: "code-workspace",
           },

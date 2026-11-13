@@ -1,4 +1,5 @@
 import {
+  PROJECT_TRACKED_FOLDER_NAME_MAX,
   PROJECT_TRACKED_FOLDERS_MAX,
   type ProjectId,
   type ProjectTrackedFolder,
@@ -79,6 +80,10 @@ const decodeCodeWorkspace = Schema.decodeUnknownEffect(
     }),
   ),
 );
+
+/** A folder's name cut to what a project can store. */
+export const trackedFolderName = (name: string) =>
+  name.trim().slice(0, PROJECT_TRACKED_FOLDER_NAME_MAX).trim();
 
 /** Submodule paths a `.gitmodules` file declares, relative to its folder with `/` separators. */
 const parseGitmodulesPaths = (text: string): ReadonlyArray<string> =>
@@ -201,7 +206,13 @@ export const scanFolders = Effect.fn("WorkspaceFolders.scan")(function* (
         Effect.map((classified) =>
           classified.state === "missing"
             ? []
-            : [{ ...folder, isGitRepository: classified.state === "git" }],
+            : [
+                {
+                  ...folder,
+                  name: trackedFolderName(folder.name),
+                  isGitRepository: classified.state === "git",
+                },
+              ],
         ),
       ),
     { concurrency: DETECTION_CONCURRENCY },

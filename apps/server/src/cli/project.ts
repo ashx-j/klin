@@ -42,7 +42,7 @@ import {
   clearPersistedServerRuntimeState,
   readLiveServerRuntimeState,
 } from "../serverRuntimeState.ts";
-import { scanFolders } from "../workspace/WorkspaceFolders.ts";
+import { scanFolders, trackedFolderName } from "../workspace/WorkspaceFolders.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import { type CliAuthLocationFlags, projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
 
@@ -517,7 +517,7 @@ const projectAddCommand = Command.make("add", {
         const scanned = flags.trackRepos ? (yield* scanFolders({ workspaceRoot })).folders : [];
         const named = flags.track.map((folder) => {
           const resolved = path.resolve(folder);
-          return { path: resolved, name: path.basename(resolved) || resolved };
+          return { path: resolved, name: trackedFolderName(path.basename(resolved)) || resolved };
         });
         const trackedFolders = [...named, ...scanned]
           .filter(
