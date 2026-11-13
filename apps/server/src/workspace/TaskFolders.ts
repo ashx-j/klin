@@ -161,6 +161,19 @@ export class TaskFolders extends Context.Service<
 
 const isTaskFolderError = Schema.is(TaskFolderError);
 
+/** The deepest folder holding all of `folders`; null when none does, as across Windows drives. */
+export const commonAncestor = (
+  path: Path.Path,
+  folders: readonly [string, ...ReadonlyArray<string>],
+): string | null => {
+  for (let ancestor = folders[0]; ;) {
+    if (folders.every((folder) => isWithinRoot(path, folder, ancestor))) return ancestor;
+    const parent = path.dirname(ancestor);
+    if (parent === ancestor) return null;
+    ancestor = parent;
+  }
+};
+
 const failureDetail = (cause: unknown) =>
   typeof cause === "object" &&
   cause !== null &&
@@ -191,13 +204,6 @@ const make = Effect.gen(function* () {
     (cause: unknown): TaskFolderError =>
       new TaskFolderError({ operation, detail: `${prefix}: ${failureDetail(cause)}`, cause });
 
-  const commonAncestor = (folders: ReadonlyArray<string>) => {
-    let ancestor = folders[0]!;
-    for (const folder of folders.slice(1)) {
-      while (!isWithinRoot(path, folder, ancestor)) ancestor = path.dirname(ancestor);
-    }
-    return ancestor;
-  };
   const mapped = (taskFolder: Pick<TaskFolder, "root" | "anchor">, source: string) =>
     path.join(taskFolder.root, path.relative(taskFolder.anchor, source));
   const depth = (target: string) => path.resolve(target).split(path.sep).length;
@@ -254,11 +260,18 @@ const make = Effect.gen(function* () {
       }
       repositories = [...selected.values()];
     }
+    const anchor = commonAncestor(path, [projectRoot, ...tracked.map((folder) => folder.path)]);
+    if (anchor === null) {
+      return yield* new TaskFolderError({
+        operation: "plan",
+        detail: `The tracked repositories of project "${project.title}" share no folder with the project, for example because they are on another drive, so no worktree can hold them together.`,
+      });
+    }
     return {
       projectId: project.projectId,
       projectRoot,
       projectIsRepository: yield* isRepository(projectRoot),
-      anchor: commonAncestor([projectRoot, ...tracked.map((folder) => folder.path)]),
+      anchor,
       repositories: repositories.map(({ name, path: folderPath }) => ({ name, path: folderPath })),
       trackedRepositories: tracked.map((folder) => folder.path),
     };

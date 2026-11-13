@@ -1,4 +1,5 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as NodePath from "@effect/platform-node/NodePath";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { type ProjectTrackedFolder, ThreadId } from "@t3tools/contracts";
@@ -401,6 +402,20 @@ it.live("selects every tracked repository up to eight and none beyond", () =>
       }
     }),
   ),
+);
+
+it.effect(
+  "lays out from the folder the project shares with its repositories, none across drives",
+  () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      assert.equal(
+        TaskFolders.commonAncestor(path, ["C:\\shop", "C:\\shop\\api", "C:\\web"]),
+        "C:\\",
+      );
+      assert.isNull(TaskFolders.commonAncestor(path, ["C:\\shop", "D:\\api"]));
+      assert.isNull(TaskFolders.commonAncestor(path, ["\\\\server\\one\\shop", "C:\\api"]));
+    }).pipe(Effect.provide(NodePath.layerWin32)),
 );
 
 it.live("adds a repository to an existing task folder on the thread's branch", () =>
