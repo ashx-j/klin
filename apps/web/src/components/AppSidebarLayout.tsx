@@ -48,6 +48,7 @@ import {
   SidebarChromeFooter,
   SidebarChromeHeader,
 } from "./sidebar/SidebarChrome";
+import { SidebarFolderDrop } from "./sidebar/SidebarFolderDrop";
 import {
   isAppModalPage,
   shownAppPageAtom,
@@ -458,25 +459,28 @@ function AppSidebarContent({ routeReveal }: { routeReveal: SidebarRouteReveal })
   const threads = <ThreadSidebar routeReveal={routeReveal} />;
   const footer = <SidebarChromeFooter />;
   return (
-    <PluginPart
-      part="app.sidebar"
-      pieces={{
-        original: (
-          <>
-            {header}
-            {threads}
-            {footer}
-          </>
-        ),
-        header,
-        threads,
-        footer,
-        back: <SidebarChromeFooter utility="back" />,
-        update: <SidebarChromeFooter utility="none" />,
-        nav: page === "settings" ? <SidebarSettingsNav /> : null,
-        page,
-      }}
-    />
+    // Covers the header and footer too, so a folder dropped anywhere on the sidebar adds a project.
+    <SidebarFolderDrop>
+      <PluginPart
+        part="app.sidebar"
+        pieces={{
+          original: (
+            <>
+              {header}
+              {threads}
+              {footer}
+            </>
+          ),
+          header,
+          threads,
+          footer,
+          back: <SidebarChromeFooter utility="back" />,
+          update: <SidebarChromeFooter utility="none" />,
+          nav: page === "settings" ? <SidebarSettingsNav /> : null,
+          page,
+        }}
+      />
+    </SidebarFolderDrop>
   );
 }
 
