@@ -164,17 +164,18 @@ export function useSnoozeWakeClock(
   return clockMs;
 }
 
-// Live status that says the cwd is not a repository means the checkout was removed. A worktree
-// thread of a project with tracked folders may sit in a plain task folder, which never is one.
+// Live status that says the cwd is not a repository means the checkout was removed, unless the
+// worktree is a task folder, whose plain project folder never is one. `inTaskFolder` is undefined
+// until that is known.
 export function withoutRemovedCheckout<
   T extends { readonly branch: string | null; readonly worktreePath: string | null },
 >(
   thread: T,
   gitStatus: { readonly isRepo?: boolean | undefined } | null,
-  project: { readonly trackedFolders?: ReadonlyArray<unknown> | undefined } | null,
+  inTaskFolder: boolean | undefined,
 ): T {
   if (gitStatus?.isRepo !== false) return thread;
-  if (thread.worktreePath !== null && (project?.trackedFolders?.length ?? 0) > 0) return thread;
+  if (thread.worktreePath !== null && inTaskFolder !== false) return thread;
   return { ...thread, branch: null, worktreePath: null };
 }
 

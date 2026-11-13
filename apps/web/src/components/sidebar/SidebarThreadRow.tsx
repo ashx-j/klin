@@ -72,6 +72,7 @@ import { useThreadSelectionStore } from "../../threadSelectionStore";
 import { useNowMinute } from "../../hooks/useNowMinute";
 import { useNowSecond } from "../../hooks/useNowSecond";
 import { vcsEnvironment, vcsBranchRevalidation } from "../../state/vcs";
+import { filesystemEnvironment } from "../../state/filesystem";
 import { useEnvironmentQuery } from "../../state/query";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import { formatRelativeTimeLabel, parseTimestampDate } from "../../timestampFormat";
@@ -176,6 +177,32 @@ function WorkingDurationLabel(props: { startedMs: number }) {
   return (
     <span className="tabular-nums">{formatWorkingDurationLabel(nowMs - props.startedMs)}</span>
   );
+}
+
+// Only a worktree whose live status says it is no repository asks whether it is a task folder.
+function useCheckoutThread<
+  T extends {
+    readonly environmentId: EnvironmentId;
+    readonly branch: string | null;
+    readonly worktreePath: string | null;
+  },
+>(thread: T, gitStatus: { readonly isRepo?: boolean | undefined } | null): T {
+  const lookup = useEnvironmentQuery(
+    gitStatus?.isRepo === false && thread.worktreePath !== null
+      ? filesystemEnvironment.taskFolder({
+          environmentId: thread.environmentId,
+          input: { worktreePath: thread.worktreePath },
+        })
+      : null,
+  );
+  // A server without task folders fails the lookup, and none of its worktrees is one.
+  const inTaskFolder =
+    lookup.error !== null
+      ? false
+      : lookup.data === null
+        ? undefined
+        : lookup.data.taskFolder !== null;
+  return withoutRemovedCheckout(thread, gitStatus, inTaskFolder);
 }
 
 function terminalProcessLabel(count: number): string {
@@ -720,7 +747,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     JSON.stringify([thread.environmentId, gitCwd]),
     gitStatus.data,
   );
-  const checkoutThread = withoutRemovedCheckout(thread, visibleGitStatus, props.project);
+  const checkoutThread = useCheckoutThread(thread, visibleGitStatus);
   const pr = linkedPullRequestStatus?.pr ?? null;
   const supportsMultiplePullRequests = useSupportsMultiplePullRequests(thread.environmentId);
   const currentLinkedPr = supportsMultiplePullRequests
@@ -1687,7 +1714,7 @@ export const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props
     JSON.stringify([thread.environmentId, gitCwd]),
     gitStatus.data,
   );
-  const checkoutThread = withoutRemovedCheckout(thread, visibleGitStatus, props.project);
+  const checkoutThread = useCheckoutThread(thread, visibleGitStatus);
   const branchMismatch = resolveLocalCheckoutBranchMismatch({
     effectiveEnvMode: thread.worktreePath === null ? "local" : "worktree",
     activeWorktreePath: thread.worktreePath,

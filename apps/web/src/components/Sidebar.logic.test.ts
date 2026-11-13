@@ -199,41 +199,52 @@ describe("withoutRemovedCheckout", () => {
   const worktree = { branch: "t3/task", worktreePath: "/worktrees/task" };
   const local = { branch: "main", worktreePath: null };
   const removed = { branch: null, worktreePath: null };
-  const tracking = { trackedFolders: [{ path: "/work/wrapper/api" }] };
 
   it.each([
     {
       why: "status still loading",
       thread: worktree,
       isRepo: undefined,
-      project: null,
+      inTaskFolder: undefined,
       to: worktree,
     },
-    { why: "a live checkout", thread: worktree, isRepo: true, project: null, to: worktree },
-    { why: "a removed worktree", thread: worktree, isRepo: false, project: null, to: removed },
     {
-      why: "a removed worktree of a project tracking nothing",
+      why: "a live checkout",
+      thread: worktree,
+      isRepo: true,
+      inTaskFolder: undefined,
+      to: worktree,
+    },
+    {
+      why: "a removed worktree outside any task folder",
       thread: worktree,
       isRepo: false,
-      project: { trackedFolders: [] },
+      inTaskFolder: false,
       to: removed,
     },
     {
-      why: "a plain task folder of a project with tracked folders",
+      why: "a worktree that is not a repository before the task folder lookup answers",
       thread: worktree,
       isRepo: false,
-      project: tracking,
+      inTaskFolder: undefined,
+      to: worktree,
+    },
+    {
+      why: "a plain task folder",
+      thread: worktree,
+      isRepo: false,
+      inTaskFolder: true,
       to: worktree,
     },
     {
       why: "a local thread whose project folder is not a repository",
       thread: local,
       isRepo: false,
-      project: tracking,
+      inTaskFolder: undefined,
       to: removed,
     },
-  ])("$why", ({ thread, isRepo, project, to }) => {
-    expect(withoutRemovedCheckout(thread, { isRepo }, project)).toEqual(to);
+  ])("$why", ({ thread, isRepo, inTaskFolder, to }) => {
+    expect(withoutRemovedCheckout(thread, { isRepo }, inTaskFolder)).toEqual(to);
   });
 });
 
