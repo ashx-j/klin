@@ -1,10 +1,11 @@
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
+import { RELEASE_REPOSITORY, RELEASES_PAGE_URL } from "./appIdentity.ts";
 import { compareSemverVersions } from "./semver.ts";
 
-const CLI_RELEASE_REPOSITORY = "pingdotgg/t3code";
-export const CLI_RELEASES_PAGE_URL = `https://github.com/${CLI_RELEASE_REPOSITORY}/releases`;
+const CLI_RELEASE_REPOSITORY = RELEASE_REPOSITORY;
+export const CLI_RELEASES_PAGE_URL = RELEASES_PAGE_URL;
 export const CLI_RELEASE_CHECKSUMS_FILE = "SHA256SUMS";
 export const CLI_RELEASE_BASE_URL_ENV = "T3CODE_RELEASE_BASE_URL";
 

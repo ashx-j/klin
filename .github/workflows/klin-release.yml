@@ -1,0 +1,297 @@
+# Klin's release. Every push to main builds the Windows x64 installer and the Linux x64 server
+# archive the desktop app's SSH environments download, then publishes both as GitHub release
+# v<version>, marked latest. The newest installer is always at
+# https://github.com/ashx-j/klin/releases/latest/download/Klin-Setup-x64.exe
+#
+# This replaces upstream T3 Code's release.yml and release-desktop.yml, which need T3's paid
+# runners, signing secrets and T3 Connect config. It keeps their build steps for these two targets.
+# Pull requests that touch the release build or the desktop app run everything except the publish.
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    paths:
+      - .github/workflows/klin-release.yml
+      - .github/actions/setup-ci-deps/**
+      - packages/shared/src/appIdentity.ts
+      - packages/ssh/src/tunnel.ts
+      - scripts/build-cli-archive.ts
+      - scripts/build-desktop-artifact.ts
+      - scripts/smoke-cli-archive.ts
+      - apps/desktop/**
+  workflow_dispatch:
+
+# One release at a time, so the newest main build is always the one marked latest.
+concurrency:
+  group: release-${{ github.event_name == 'pull_request' && github.event.pull_request.number || 'main' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      # Full history, so the version step can find the newest upstream release Klin has merged.
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      # <newest merged upstream release>-klin.<run number>. T3 Code never uses a "klin"
+      # prerelease, so no Klin version can name a T3 Code release. The run number only grows
+      # while this file keeps its name.
+      - name: Resolve version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          base=""
+          while read -r candidate sha; do
+            if git merge-base --is-ancestor "$sha" HEAD 2>/dev/null; then
+              base="$candidate"
+              break
+            fi
+          done < <(git ls-remote --tags --refs https://github.com/pingdotgg/t3code 'refs/tags/v*' \
+            | sed -nE 's#^([0-9a-f]{40})\trefs/tags/v([0-9]+\.[0-9]+\.[0-9]+)$#\2 \1#p' \
+            | sort -rV)
+          if [[ -z "$base" ]]; then
+            base="$(node -p 'require("./apps/server/package.json").version.split("-")[0]')"
+          fi
+          version="${base}-klin.${GITHUB_RUN_NUMBER}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Building Klin $version"
+
+      - name: Install build libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsecret-1-dev pkg-config patchelf libatomic1
+
+      - uses: ./.github/actions/setup-ci-deps
+        with:
+          install-args: --filter=t3... --filter=@t3tools/web... --filter=@t3tools/desktop... --filter=@t3tools/scripts...
+          save-pnpm-store: "false"
+
+      - name: Stamp the version into the packages
+        run: node scripts/update-release-package-versions.ts "${{ steps.version.outputs.version }}"
+
+      # Server with the web client in apps/server/dist, and the Electron main in
+      # apps/desktop/dist-electron.
+      - name: Build JS bundle
+        run: vp run build:desktop:bundle
+
+      - name: Apply web client branding
+        run: node scripts/apply-web-brand-assets.ts production apps/server/dist/client
+
+      - name: Install Rust targets
+        run: rustup target add x86_64-unknown-linux-gnu x86_64-pc-windows-msvc
+
+      - name: Install cargo-xwin
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-xwin@0.23.1
+
+      - name: Build resource monitors
+        run: |
+          cargo build --locked --release --manifest-path native/resource-monitor/Cargo.toml --target x86_64-unknown-linux-gnu
+          cargo xwin build --locked --release --manifest-path native/resource-monitor/Cargo.toml --target x86_64-pc-windows-msvc
+
+      - name: Build Linux server archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          node apps/server/scripts/cli.ts build-exe --verbose
+          monitor="$RUNNER_TEMP/cli-resource-monitor/linux-x64"
+          mkdir -p "$monitor"
+          cp native/resource-monitor/target/x86_64-unknown-linux-gnu/release/t3-resource-monitor "$monitor/"
+          node scripts/build-cli-archive.ts \
+            --platform linux \
+            --arch x64 \
+            --version "${{ steps.version.outputs.version }}" \
+            --resource-monitor-dir "$RUNNER_TEMP/cli-resource-monitor" \
+            --output-dir release-cli
+
+      - name: Smoke-test Linux server archive
+        run: node scripts/smoke-cli-archive.ts --archive release-cli/* --expect-version "${{ steps.version.outputs.version }}"
+
+      # Unsigned. GITHUB_REPOSITORY points the app's update feed at this repository's releases.
+      - name: Build Windows installer
+        shell: bash
+        env:
+          T3CODE_DESKTOP_REUSE_RESOURCE_MONITOR: true
+        run: |
+          vp run dist:desktop:artifact \
+            --platform win \
+            --target nsis \
+            --arch x64 \
+            --build-version "${{ steps.version.outputs.version }}" \
+            --wsl-runtime "$GITHUB_WORKSPACE"/release-cli/t3-*-linux-x64.tar.gz \
+            --skip-build \
+            --verbose
+
+      - name: Collect release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+          cp release/Klin-Setup-x64.exe release/Klin-Setup-x64.exe.blockmap release/latest.yml release-assets/
+          cp release-cli/* release-assets/
+          (cd release-assets && sha256sum t3-*.tar.gz > SHA256SUMS)
+          grep -q "^version: ${{ steps.version.outputs.version }}$" release-assets/latest.yml
+          ls -l release-assets
+          cat release-assets/latest.yml release-assets/SHA256SUMS
+
+      - name: Upload release assets
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-assets
+          path: release-assets/*
+          if-no-files-found: error
+          compression-level: 0
+
+  # Installs the real installer on Windows and checks Klin keeps to its own name, folders and
+  # port, and that its server runs there.
+  verify-windows:
+    name: Verify Windows installer
+    needs: [build]
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-assets
+          path: release-assets
+
+      - name: Install, run and uninstall Klin
+        shell: pwsh
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Remove-Item Env:T3CODE_HOME -ErrorAction SilentlyContinue
+          function Fail($message) { Write-Host "::error::$message"; exit 1 }
+
+          Start-Process -Wait -FilePath (Resolve-Path release-assets\Klin-Setup-x64.exe) -ArgumentList '/S'
+          $dir = Join-Path $env:LOCALAPPDATA 'Programs\Klin'
+          $exe = Join-Path $dir 'Klin.exe'
+          if (-not (Test-Path $exe)) { Fail "Klin.exe is not in $dir" }
+          Write-Host "Installed to $dir"
+
+          $uninstall = Get-ChildItem HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall |
+            Get-ItemProperty | Where-Object { $_.DisplayName -like 'Klin*' }
+          if (-not $uninstall) { Fail 'No uninstall entry named Klin' }
+          Write-Host "Uninstall entry: $($uninstall.PSChildName) '$($uninstall.DisplayName)' $($uninstall.DisplayVersion)"
+          if ($uninstall.DisplayVersion -ne $env:VERSION) { Fail "DisplayVersion is $($uninstall.DisplayVersion)" }
+          $menu = Get-ChildItem "$env:APPDATA\Microsoft\Windows\Start Menu\Programs" -Recurse -Filter '*.lnk' |
+            Where-Object { $_.BaseName -eq 'Klin' }
+          if (-not $menu) { Fail 'No Start menu shortcut named Klin' }
+
+          # The bundled server, the way the klin command runs it.
+          $entry = Join-Path $dir 'resources\server.asar\apps\server\dist\bin.mjs'
+          $env:ELECTRON_RUN_AS_NODE = '1'
+          $out = Join-Path $env:RUNNER_TEMP 'version.txt'
+          Start-Process -Wait -NoNewWindow -FilePath $exe -ArgumentList "`"$entry`" --version" -RedirectStandardOutput $out
+          $reported = (Get-Content $out -Raw).Trim()
+          if ($reported -notlike "*$env:VERSION*") { Fail "The server reports '$reported'" }
+          Remove-Item Env:ELECTRON_RUN_AS_NODE
+
+          # The desktop app itself: its own profile, home folder and port.
+          $diag = Join-Path $env:RUNNER_TEMP 'klin-diagnostics'
+          New-Item -ItemType Directory -Force $diag | Out-Null
+          $stdout = Join-Path $diag 'stdout.txt'
+          $stderr = Join-Path $diag 'stderr.txt'
+          $chromium = Join-Path $diag 'chromium.log'
+          $app = Start-Process -FilePath $exe -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr `
+            -ArgumentList "--enable-logging=file", "--log-file=`"$chromium`""
+          $deadline = (Get-Date).AddSeconds(150)
+          $ready = $false
+          while ((Get-Date) -lt $deadline -and -not $ready) {
+            Start-Sleep -Seconds 2
+            try {
+              $null = Invoke-WebRequest -UseBasicParsing -SkipHttpErrorCheck -TimeoutSec 2 http://127.0.0.1:4773/
+              $ready = $true
+            } catch {}
+          }
+          $klin = @(Get-Process | Where-Object { $_.Path -like "$dir\*" })
+          Write-Host "--- Klin processes: $($klin.Count)"
+          $klin | ForEach-Object { Write-Host "$($_.Id) $($_.ProcessName) started $($_.StartTime)" }
+          Write-Host '--- Klin listeners'
+          Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue |
+            Where-Object { $_.OwningProcess -in $klin.Id } |
+            ForEach-Object { Write-Host "$($_.LocalAddress):$($_.LocalPort) pid $($_.OwningProcess)" }
+          Write-Host '--- Klin files'
+          foreach ($root in @("$env:USERPROFILE\.klin", "$env:APPDATA\klin", "$env:TEMP\klin")) {
+            Write-Host "$root exists: $(Test-Path $root)"
+          }
+          Get-ChildItem "$env:USERPROFILE\.klin", "$env:APPDATA\klin" -Recurse -Depth 2 -ErrorAction SilentlyContinue |
+            Select-Object -First 80 | ForEach-Object { Write-Host $_.FullName }
+          Get-ChildItem "$env:USERPROFILE\.klin\userdata\logs" -File -ErrorAction SilentlyContinue |
+            ForEach-Object { Write-Host "--- $($_.Name)"; Get-Content $_.FullName -Tail 60 | ForEach-Object { Write-Host $_ } }
+          foreach ($stream in @($stdout, $stderr, $chromium)) {
+            Write-Host "--- $stream"
+            Get-Content $stream -Tail 80 -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_ }
+          }
+          try {
+            Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+            $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+            $bitmap = New-Object System.Drawing.Bitmap $bounds.Width, $bounds.Height
+            [System.Drawing.Graphics]::FromImage($bitmap).CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size)
+            $bitmap.Save((Join-Path $diag 'screen.png'))
+          } catch { Write-Host "No screenshot: $($_.Exception.Message)" }
+          $klin | Stop-Process -Force -ErrorAction SilentlyContinue
+          if (-not $ready) { Fail 'The desktop app did not answer on 127.0.0.1:4773 within 150 seconds' }
+          foreach ($own in @("$env:USERPROFILE\.klin\userdata", "$env:APPDATA\klin")) {
+            if (-not (Test-Path $own)) { Fail "Klin did not create $own" }
+          }
+          foreach ($t3 in @("$env:USERPROFILE\.t3", "$env:APPDATA\t3code-v2", "$env:APPDATA\T3 Code (Beta)", 'HKCU:\Software\Classes\t3code')) {
+            if (Test-Path $t3) { Fail "Klin created T3 Code's $t3" }
+          }
+
+          Start-Sleep -Seconds 3
+          Start-Process -Wait -FilePath (Join-Path $dir 'Uninstall Klin.exe') -ArgumentList '/S'
+          Start-Sleep -Seconds 5
+          if (Test-Path $exe) { Fail 'Klin.exe is still installed after uninstall' }
+          Write-Host 'Klin installed, ran, and uninstalled cleanly.'
+
+      - name: Upload Windows diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-diagnostics
+          path: ${{ runner.temp }}/klin-diagnostics
+          if-no-files-found: ignore
+
+  publish:
+    name: Publish release
+    needs: [build, verify-windows]
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-assets
+          path: release-assets
+
+      # The SSH runner downloads v<version>/t3-<version>-linux-x64.tar.gz and SHA256SUMS. Older
+      # releases stay, so a desktop app that has not updated yet still finds its server archive.
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          gh release create "v$VERSION" release-assets/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "Klin $VERSION" \
+            --notes "Built from $GITHUB_SHA. Windows: download Klin-Setup-x64.exe." \
+            --latest

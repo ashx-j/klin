@@ -4,6 +4,7 @@ import * as NodeModule from "node:module";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
+import { APP_DEV_URL_SCHEME, APP_ID, APP_NAME, APP_URL_SCHEME } from "@t3tools/shared/appIdentity";
 import { ensureElectronRuntime } from "./ensure-electron-runtime.mjs";
 
 const isDevelopment = Boolean(process.env.VITE_DEV_SERVER_URL);
@@ -13,11 +14,9 @@ const repoRoot = NodePath.resolve(desktopDir, "..", "..");
 const devBundleIdSuffix = NodePath.basename(repoRoot)
   .toLowerCase()
   .replaceAll(/[^a-z0-9]+/g, "");
-const APP_DISPLAY_NAME = isDevelopment ? "T3 Code (Dev)" : "T3 Code (Beta)";
-const APP_BUNDLE_ID = isDevelopment
-  ? `com.t3tools.t3code.dev.${devBundleIdSuffix || "local"}`
-  : "com.t3tools.t3code";
-const APP_PROTOCOL_SCHEMES = isDevelopment ? ["t3code-dev"] : ["t3code"];
+const APP_DISPLAY_NAME = isDevelopment ? `${APP_NAME} (Dev)` : `${APP_NAME} (Beta)`;
+const APP_BUNDLE_ID = isDevelopment ? `${APP_ID}.dev.${devBundleIdSuffix || "local"}` : APP_ID;
+const APP_PROTOCOL_SCHEMES = isDevelopment ? [APP_DEV_URL_SCHEME] : [APP_URL_SCHEME];
 const LAUNCHER_VERSION = 20;
 const developmentMacIconPngPath = NodePath.join(
   repoRoot,

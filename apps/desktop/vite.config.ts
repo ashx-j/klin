@@ -102,6 +102,8 @@ export default defineConfig({
       entry: ["src/boot.ts", "src/compileCache.ts", "src/serverCompileCache.ts"],
       clean: false,
       deps: {
+        // The packaged app ships no workspace packages, so what these files import must be inlined.
+        alwaysBundle: (id) => id === "@t3tools/shared/appIdentity",
         neverBundle: (id) => id === "./main.cjs" || id === "./compileCache.cjs",
       },
     },

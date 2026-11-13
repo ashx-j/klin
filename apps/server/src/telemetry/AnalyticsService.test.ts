@@ -19,6 +19,7 @@ import * as HttpServer from "effect/http/HttpServer";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { vi } from "vite-plus/test";
 
 import type { ManagedPolicyDocument } from "@t3tools/contracts";
 
@@ -26,6 +27,13 @@ import * as ServerConfig from "../config.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import { getTelemetryIdentity } from "./Identify.ts";
 import * as AnalyticsService from "./AnalyticsService.ts";
+
+// Klin ships with product analytics off (AnalyticsService.off.test.ts). These tests keep
+// covering the delivery code behind that switch, which upstream still changes.
+vi.mock("@t3tools/shared/appIdentity", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@t3tools/shared/appIdentity")>()),
+  PRODUCT_ANALYTICS_ENABLED: true,
+}));
 
 interface RecordedBatchRequest {
   readonly path: string;

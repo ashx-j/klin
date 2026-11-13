@@ -27,6 +27,7 @@ import {
   ProviderDriverKind,
   ThreadId,
 } from "@t3tools/contracts";
+import { CLI_COMMAND_NAME } from "@t3tools/shared/appIdentity";
 import { Link, useBlocker } from "@tanstack/react-router";
 import * as Schema from "effect/Schema";
 import {
@@ -1866,12 +1867,13 @@ function CliPathSetup() {
       <p className="min-w-0 flex-1 text-sm text-muted-foreground">
         {setup.added ? (
           <>
-            Added to {setup.file}. Open a new terminal to use <code className="font-mono">t3</code>.
+            Added to {setup.file}. Open a new terminal to use{" "}
+            <code className="font-mono">{CLI_COMMAND_NAME}</code>.
           </>
         ) : (
           <>
-            Use <code className="font-mono">t3</code> from any terminal. Adds one line to{" "}
-            {setup.file}.
+            Use <code className="font-mono">{CLI_COMMAND_NAME}</code> from any terminal. Adds one
+            line to {setup.file}.
           </>
         )}
       </p>

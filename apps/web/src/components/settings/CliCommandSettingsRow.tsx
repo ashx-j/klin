@@ -1,5 +1,7 @@
+import { CLI_COMMAND_NAME } from "@t3tools/shared/appIdentity";
 import { useState } from "react";
 
+import { APP_BASE_NAME } from "~/branding";
 import {
   desktopCliCommandStateAtom,
   getDesktopCliCommandBridge,
@@ -12,9 +14,9 @@ import { SettingsRow } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 
 const FAILURE_TITLES = {
-  install: "Could not install t3",
-  uninstall: "Could not remove t3",
-  addToPath: "Could not add t3 to PATH",
+  install: `Could not install ${CLI_COMMAND_NAME}`,
+  uninstall: `Could not remove ${CLI_COMMAND_NAME}`,
+  addToPath: `Could not add ${CLI_COMMAND_NAME} to PATH`,
 } as const;
 
 /** The desktop `t3` command's state, and its actions with a toast on failure. */
@@ -53,14 +55,14 @@ export function CliCommandSettingsRow() {
   if (!state?.supported) return null;
   const installed = state.installedPath !== null;
   const description = state.shadowedBy
-    ? `Another t3 at ${state.shadowedBy} runs first in a new terminal. Remove it to use T3 Code's.`
+    ? `Another ${CLI_COMMAND_NAME} at ${state.shadowedBy} runs first in a new terminal. Remove it to use ${APP_BASE_NAME}'s.`
     : !installed
-      ? "Run T3 Code's CLI as `t3` from any terminal."
+      ? `Run ${APP_BASE_NAME}'s CLI as \`${CLI_COMMAND_NAME}\` from any terminal.`
       : state.onPath
         ? `Installed at ${state.installedPath}. Open a new terminal to use it.`
         : state.pathSetup?.added
           ? `Installed at ${state.installedPath} and added to PATH in ${state.pathSetup.file}. Open a new terminal to use it.`
-          : `Installed at ${state.installedPath}, which is not on your PATH yet.${state.pathSetup ? "" : " Add its folder to your PATH to run `t3`."}`;
+          : `Installed at ${state.installedPath}, which is not on your PATH yet.${state.pathSetup ? "" : ` Add its folder to your PATH to run \`${CLI_COMMAND_NAME}\`.`}`;
 
   return (
     <SettingsRow
