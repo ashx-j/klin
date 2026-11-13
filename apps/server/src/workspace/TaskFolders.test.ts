@@ -2,7 +2,7 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodePath from "@effect/platform-node/NodePath";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
-import { type ProjectTrackedFolder, ThreadId } from "@t3tools/contracts";
+import { type ProjectTrackedFolder, type TaskFolder, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -408,6 +408,33 @@ it.live("removes what it created when one repository fails", () =>
       assert.deepEqual(yield* fileSystem.readDirectory(path.join(config.worktreesDir, "shop")), []);
       assert.deepEqual(yield* (yield* TaskFolderStore.TaskFolderStore).list, []);
       assert.isTrue(yield* fileSystem.exists(path.join(tmp, "shop", "AGENTS.md")));
+    }),
+  ),
+);
+
+it.live("records every checkout before making one, so a restart midway leaves none unknown", () =>
+  withState((state) =>
+    Effect.gen(function* () {
+      const { path, tmp, repository } = yield* fixture;
+      const taskFolders = yield* TaskFolders.TaskFolders;
+      state.workspaceRoot = path.join(tmp, "shop");
+      state.trackedFolders = tracked(yield* repository("shop/api"), yield* repository("shop/web"));
+      const claimed: Array<TaskFolder | null> = [];
+
+      const { taskFolder } = yield* taskFolders.create({
+        plan: (yield* taskFolders.plan({ projectId }))!,
+        branch: "feature",
+        projectStart: { refName: "main", baseRefName: "main" },
+        startFromOrigin: false,
+        onClaimed: (folder) =>
+          taskFolders.find(folder.root).pipe(
+            Effect.orDie,
+            Effect.map((found) => claimed.push(found)),
+          ),
+      });
+
+      assert.lengthOf(taskFolder.repositories, 2);
+      assert.deepEqual(claimed, [taskFolder]);
     }),
   ),
 );

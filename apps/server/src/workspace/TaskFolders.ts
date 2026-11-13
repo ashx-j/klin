@@ -578,26 +578,19 @@ const make = Effect.gen(function* () {
     withWorkspaceLease(path.resolve(taskFolder.projectPath), effect);
 
   const createRepositoryWorktree = Effect.fnUntraced(function* (
-    taskFolder: TaskFolder,
-    repository: ProjectTrackedFolder,
+    checkout: TaskFolderRepository,
     branch: string,
     startFromOrigin: boolean,
   ) {
-    const worktreePath = mapped(taskFolder, repository.path);
-    yield* fileSystem.makeDirectory(path.dirname(worktreePath), { recursive: true });
-    const start = yield* repositoryStart(repository.path, startFromOrigin);
+    yield* fileSystem.makeDirectory(path.dirname(checkout.worktreePath), { recursive: true });
+    const start = yield* repositoryStart(checkout.repositoryPath, startFromOrigin);
     yield* git.createWorktree({
-      cwd: repository.path,
+      cwd: checkout.repositoryPath,
       refName: start.refName,
       newRefName: branch,
       baseRefName: start.baseRefName,
-      path: worktreePath,
+      path: checkout.worktreePath,
     });
-    return {
-      repositoryPath: repository.path,
-      worktreePath,
-      name: repository.name,
-    } satisfies TaskFolderRepository;
   });
 
   const create: TaskFolders["Service"]["create"] = Effect.fn("TaskFolders.create")(
@@ -623,43 +616,52 @@ const make = Effect.gen(function* () {
         ? requested
         : yield* freeBranchName("create", requested, [...names, projectNames]);
       const root = yield* allocateRoot(taskPlan, branch);
-      const empty: TaskFolder = {
-        root,
+      const location = { root, anchor: taskPlan.anchor };
+      const planned: TaskFolder = {
+        ...location,
         projectId: taskPlan.projectId,
         projectRoot: taskPlan.projectRoot,
-        anchor: taskPlan.anchor,
-        projectPath: path.join(root, path.relative(taskPlan.anchor, taskPlan.projectRoot)),
+        projectPath: mapped(location, taskPlan.projectRoot),
         projectIsWorktree: taskPlan.projectIsRepository,
-        repositories: [],
+        repositories: taskPlan.repositories.map((repository) => ({
+          repositoryPath: repository.path,
+          worktreePath: mapped(location, repository.path),
+          name: repository.name,
+        })),
       };
       const created: TaskFolderRepository[] = [];
-      const current = (): TaskFolder => ({ ...empty, repositories: [...created] });
+      const current = (): TaskFolder => ({ ...planned, repositories: [...created] });
       return yield* Effect.gen(function* () {
-        // Recorded before any checkout, so an interrupted creation is still found and removed.
-        yield* store.put(empty);
-        if (input.onClaimed !== undefined) yield* input.onClaimed(empty, branch);
+        // Every checkout is recorded before any is made, so one a restart cuts short is found.
+        yield* store.put(planned);
+        if (input.onClaimed !== undefined) yield* input.onClaimed(planned, branch);
         if (taskPlan.projectIsRepository) {
-          yield* fileSystem.makeDirectory(path.dirname(empty.projectPath), { recursive: true });
+          yield* fileSystem.makeDirectory(path.dirname(planned.projectPath), { recursive: true });
           yield* git.createWorktree(
             {
               cwd: taskPlan.projectRoot,
               refName: input.projectStart.refName,
               newRefName: branch,
               baseRefName: input.projectStart.baseRefName,
-              path: empty.projectPath,
+              path: planned.projectPath,
             },
             input.projectProgress === undefined ? {} : { progress: input.projectProgress },
           );
         } else {
-          yield* linkFolder(taskPlan.projectRoot, empty.projectPath, taskPlan.trackedRepositories);
+          yield* linkFolder(
+            taskPlan.projectRoot,
+            planned.projectPath,
+            taskPlan.trackedRepositories,
+          );
         }
         // A repository inside another waits for the one that holds it.
         const levels = Map.groupBy(
-          taskPlan.repositories,
-          (repository) =>
-            taskPlan.repositories.filter(
+          planned.repositories,
+          (checkout) =>
+            planned.repositories.filter(
               (other) =>
-                other.path !== repository.path && isWithinRoot(path, repository.path, other.path),
+                other.repositoryPath !== checkout.repositoryPath &&
+                isWithinRoot(path, checkout.repositoryPath, other.repositoryPath),
             ).length,
         );
         for (const level of [...levels.keys()].toSorted((left, right) => left - right)) {
@@ -667,21 +669,21 @@ const make = Effect.gen(function* () {
           // without being known here, so nothing would remove it.
           const exits = yield* Effect.forEach(
             levels.get(level)!,
-            (repository) =>
-              createRepositoryWorktree(empty, repository, branch, input.startFromOrigin).pipe(
-                Effect.tap((worktree) =>
+            (checkout) =>
+              createRepositoryWorktree(checkout, branch, input.startFromOrigin).pipe(
+                Effect.tap(() =>
                   Effect.suspend(() => {
-                    created.push(worktree);
+                    created.push(checkout);
                     return (
                       input.onRepository?.({
-                        name: repository.name,
+                        name: checkout.name,
                         done: created.length,
-                        total: taskPlan.repositories.length,
+                        total: planned.repositories.length,
                       }) ?? Effect.void
                     );
                   }),
                 ),
-                Effect.mapError(fail("create", `Could not create the ${repository.name} worktree`)),
+                Effect.mapError(fail("create", `Could not create the ${checkout.name} worktree`)),
                 Effect.exit,
               ),
             { concurrency: REPOSITORY_CONCURRENCY },
@@ -689,12 +691,15 @@ const make = Effect.gen(function* () {
           const failed = exits.find(Exit.isFailure);
           if (failed !== undefined) return yield* Effect.failCause(failed.cause);
         }
-        const taskFolder = current();
-        yield* store.put(taskFolder);
-        return { taskFolder, branch };
+        return { taskFolder: planned, branch };
       }).pipe(
         Effect.onError(() =>
-          removeLocked(current(), { force: true, forget: true, deleteBranch: branch }).pipe(
+          // The record first drops checkouts never made, so what removal keeps matches the disk.
+          store.put(current()).pipe(
+            Effect.ignore,
+            Effect.andThen(
+              removeLocked(current(), { force: true, forget: true, deleteBranch: branch }),
+            ),
             Effect.tap(({ kept }) =>
               kept.length === 0
                 ? Effect.void
