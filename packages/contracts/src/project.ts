@@ -46,6 +46,23 @@ export const ProjectScript = Schema.Struct({
 });
 export type ProjectScript = typeof ProjectScript.Type;
 
+export const PROJECT_TRACKED_FOLDERS_MAX = 128;
+export const PROJECT_TRACKED_FOLDER_NAME_MAX = 128;
+
+/**
+ * A folder the project works in besides its home folder. Paths are absolute and only mean
+ * something on the project's own environment. Git folders get their own history and review.
+ */
+export const ProjectTrackedFolder = Schema.Struct({
+  path: TrimmedNonEmptyString,
+  name: TrimmedNonEmptyString.check(Schema.isMaxLength(PROJECT_TRACKED_FOLDER_NAME_MAX)),
+});
+export type ProjectTrackedFolder = typeof ProjectTrackedFolder.Type;
+
+export const ProjectTrackedFolders = Schema.Array(ProjectTrackedFolder).check(
+  Schema.isMaxLength(PROJECT_TRACKED_FOLDERS_MAX),
+);
+
 export const ProjectIconColor = Schema.Literals([
   "gray",
   "red",
@@ -163,6 +180,8 @@ export const Project = Schema.Struct({
   // Opt-in because background sync performs network I/O and may move the checkout.
   autoPull: Schema.optional(Schema.Boolean),
   scripts: Schema.Array(ProjectScript),
+  // Absent from older servers; that means a single-folder project.
+  trackedFolders: Schema.optional(ProjectTrackedFolders),
   pinnedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   archivedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   createdAt: IsoDateTime,
@@ -183,6 +202,7 @@ export const ProjectCreatePayload = Schema.Struct({
   createWorkspaceRootIfMissing: Schema.optional(Schema.Boolean),
   defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
   scripts: Schema.optional(Schema.Array(ProjectScript)),
+  trackedFolders: Schema.optional(ProjectTrackedFolders),
 });
 export type ProjectCreatePayload = typeof ProjectCreatePayload.Type;
 
@@ -195,6 +215,11 @@ export const ProjectUpdatePayload = Schema.Struct({
   faviconPath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   defaultThreadEnvMode: Schema.optional(Schema.NullOr(ThreadEnvMode)),
   scripts: Schema.optional(Schema.Array(ProjectScript)),
+  trackedFolders: Schema.optional(
+    ProjectTrackedFolders.annotate({
+      description: "Extra folders by absolute path. Replaces the whole list.",
+    }),
+  ),
   pinned: Schema.optional(Schema.Boolean),
   archived: Schema.optional(
     Schema.Boolean.annotate({

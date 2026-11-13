@@ -595,6 +595,17 @@ const OPENCODE_RESTRICTED_PERMISSIONS = [
   "doom_loop",
 ] as const;
 
+/**
+ * `external_directory` patterns that grant the thread's other folders. OpenCode patterns have no
+ * escape for `*` or `?`, so a folder whose path holds one gets no grant and keeps the default rule.
+ */
+export const openCodeExtraRootPatterns = (
+  runtimePolicy: Pick<ProviderAdapter.ProviderAdapterV2RuntimePolicy, "workspace">,
+): ReadonlyArray<string> =>
+  (runtimePolicy.workspace?.extraRoots ?? []).flatMap((root) =>
+    /[*?]/.test(root) ? [] : [`${root.replace(/\/$/, "")}/*`],
+  );
+
 /** OpenCode has no OS sandbox; permission rules must enforce non-interactive policies too. */
 export function openCodePermissionRules(
   runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
@@ -681,6 +692,11 @@ export function openCodePermissionRules(
         }
       }
     }
+  }
+
+  // The thread's other folders count as workspace; `edit` still decides whether writes ask.
+  for (const pattern of openCodeExtraRootPatterns(runtimePolicy)) {
+    rules.push({ permission: "external_directory", pattern, action: "allow" });
   }
 
   return rules;
@@ -2989,7 +3005,11 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
             ...(variant === undefined ? {} : { variant }),
             system: [
               orchestrationSystemPrompt,
-              buildRuntimeInstructions({ harness: "OpenCode", model: turn.modelSelection.model }),
+              buildRuntimeInstructions({
+                harness: "OpenCode",
+                model: turn.modelSelection.model,
+                runtimePolicy: turn.runtimePolicy,
+              }),
             ]
               .filter(Boolean)
               .join("\n\n"),

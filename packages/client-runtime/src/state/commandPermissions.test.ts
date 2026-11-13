@@ -163,6 +163,7 @@ describe("command permissions", () => {
     { method: WS_METHODS.pluginsLink, scope: AuthSettingsWriteScope },
     { method: WS_METHODS.pluginsUninstall, scope: AuthSettingsWriteScope },
     { method: WS_METHODS.pluginsSettingsUpdate, scope: AuthSettingsWriteScope },
+    { method: WS_METHODS.workspaceAddTaskFolderRepository, scope: AuthSourceControlWriteScope },
   ])("requires the destination $scope grant for $method", ({ method, scope }) =>
     Effect.gen(function* () {
       const registry = yield* setup;
