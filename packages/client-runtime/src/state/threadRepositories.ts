@@ -94,7 +94,8 @@ export function repositoryCheckpointScopeIds(
 /**
  * What a rewind to `checkpoint`, the thread's own rewind target, can restore on disk: every file,
  * only the repositories of a task folder whose project folder has no snapshot, or nothing.
- * The server refuses a file rewind this does not offer.
+ * The server refuses any other file rewind, except one with nothing to restore, which only
+ * rewinds the conversation.
  */
 export function rewindFileRestore(input: {
   readonly projection: Pick<OrchestrationV2ThreadProjection, "checkpoints" | "checkpointScopes">;
