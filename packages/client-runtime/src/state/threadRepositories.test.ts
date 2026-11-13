@@ -387,6 +387,12 @@ describe("worktree repository selection", () => {
       { repositoryPath: "/work/wrapper/services/api", name: "api", relativePath: "services/api" },
       { repositoryPath: "/work/shared", name: "shared" },
     ]);
+    expect(
+      worktreeRepositoryChoices({
+        folders: [{ path: "/work/wrapper/..dots", name: "dots", state: "git" }],
+        projectRoot: "/work/wrapper",
+      }),
+    ).toEqual([{ repositoryPath: "/work/wrapper/..dots", name: "dots", relativePath: "..dots" }]);
   });
 
   it("takes every repository by default and sends nothing until the user chooses", () => {
@@ -549,6 +555,7 @@ describe("turnDiffSections", () => {
           diff: "diff client\n",
         },
         { name: "shared", repositoryPath: "/shared", relativePath: "../shared", diff: "diff s\n" },
+        { name: "dots", repositoryPath: "/work/..dots", relativePath: "..dots", diff: "diff d\n" },
       ],
     },
     "wrapper",
@@ -560,6 +567,7 @@ describe("turnDiffSections", () => {
       ["/work/api", "api", "api"],
       ["/work/api/client", "api-client", "api/client"],
       ["/shared", "shared", "../shared"],
+      ["/work/..dots", "dots", "..dots"],
     ]);
     expect(turnDiffSections({ diff: "" }, "wrapper")).toEqual([]);
     expect(turnDiffSections({ diff: "", repositories: [] }, "wrapper")).toEqual([]);
@@ -569,8 +577,19 @@ describe("turnDiffSections", () => {
     expect(repositoryFilePath("api/client", "src/a.ts")).toBe("api/client/src/a.ts");
     expect(repositoryFilePath("", "src/a.ts")).toBe("src/a.ts");
     const match = repositorySectionForPath(sections, "api/client/src/a.ts");
-    expect([match?.section.name, match?.path]).toEqual(["api-client", "src/a.ts"]);
-    expect(repositorySectionForPath(sections, "../shared/x.ts")?.path).toBe("x.ts");
+    expect([match?.section.name, match?.path, match?.insideThreadFolder]).toEqual([
+      "api-client",
+      "src/a.ts",
+      true,
+    ]);
+    expect(repositorySectionForPath(sections, "../shared/x.ts")).toMatchObject({
+      path: "x.ts",
+      insideThreadFolder: false,
+    });
+    expect(repositorySectionForPath(sections, "..dots/x.ts")).toMatchObject({
+      path: "x.ts",
+      insideThreadFolder: true,
+    });
     expect(repositorySectionForPath(sections, "README.md")).toBeNull();
     expect(repositorySectionForPath(sections, "apiary/x.ts")).toBeNull();
   });

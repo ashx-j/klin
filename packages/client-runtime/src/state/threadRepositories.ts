@@ -132,6 +132,11 @@ function pathSegments(path: string): { root: string; segments: string[] } | unde
   return { root: drive.toLowerCase(), segments: segments.slice(1) };
 }
 
+/** Whether a `/`-separated relative path climbs out of the folder it starts from. */
+function leavesFolder(relativePath: string): boolean {
+  return relativePath === ".." || relativePath.startsWith("../");
+}
+
 function relativeFolderPath(from: string, to: string): string | undefined {
   const source = pathSegments(from);
   const target = pathSegments(to);
@@ -357,13 +362,13 @@ export function turnDiffSections(
 }
 
 /**
- * The repository section a thread-relative path belongs to, and the path inside that repository.
- * Null for a file of the thread's own folder.
+ * The repository section a thread-relative path belongs to, the path inside that repository, and
+ * whether the repository sits inside the thread's folder. Null for a file of the thread's own folder.
  */
 export function repositorySectionForPath(
   sections: ReadonlyArray<TurnDiffSection>,
   filePath: string,
-): { readonly section: TurnDiffSection; readonly path: string } | null {
+) {
   let match: { readonly section: TurnDiffSection; readonly path: string } | null = null;
   for (const section of sections) {
     if (section.repositoryPath === null || section.relativePath === "") continue;
@@ -373,7 +378,9 @@ export function repositorySectionForPath(
       match = { section, path: filePath.slice(prefix.length) };
     }
   }
-  return match;
+  return match === null
+    ? null
+    : { ...match, insideThreadFolder: !leavesFolder(match.section.relativePath) };
 }
 
 /** How many repository sections a thread shows before the rest fold behind "Show N more". */
@@ -570,7 +577,7 @@ export function worktreeRepositoryChoices(input: {
       {
         repositoryPath: folder.path,
         name: folder.name,
-        ...(relativePath === undefined || relativePath === "" || relativePath.startsWith("..")
+        ...(relativePath === undefined || relativePath === "" || leavesFolder(relativePath)
           ? {}
           : { relativePath }),
       },

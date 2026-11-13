@@ -785,7 +785,7 @@ export default function DiffPanel({
     if (match === null) return null;
     return {
       path: match.path,
-      insideThreadFolder: !match.section.relativePath.startsWith(".."),
+      insideThreadFolder: match.insideThreadFolder,
       cwd: selectedTurn?.repositories?.find(
         (repository) => repository.repositoryPath === match.section.repositoryPath,
       )?.cwd,
