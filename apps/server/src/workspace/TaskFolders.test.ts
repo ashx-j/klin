@@ -343,6 +343,27 @@ it.live("never shares a folder another creation reserved first", () => {
   );
 });
 
+it.live("never hands out the folder of a task folder whose record cleanup kept", () =>
+  withState((state) =>
+    Effect.gen(function* () {
+      const { path, tmp, run, repository } = yield* fixture;
+      const taskFolders = yield* TaskFolders.TaskFolders;
+      const api = yield* repository("shop/api");
+      state.workspaceRoot = path.join(tmp, "shop");
+      state.trackedFolders = tracked(api);
+      const { taskFolder: first } = yield* create("feature");
+      yield* taskFolders.remove({ root: first.root, force: true, forget: false });
+      // Its branch is gone too, so a new thread can take the same name.
+      yield* run(api, "branch", "-D", "feature");
+
+      const { taskFolder: second } = yield* create("feature");
+
+      assert.notEqual(second.root, first.root);
+      assert.deepEqual(yield* taskFolders.find(first.root), first);
+    }),
+  ),
+);
+
 it.live("gives every repository one branch name when one of them already has it", () =>
   withState((state) =>
     Effect.gen(function* () {

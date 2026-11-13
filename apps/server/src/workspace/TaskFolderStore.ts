@@ -56,6 +56,8 @@ const make = Effect.gen(function* () {
 
   const failed = (cause: unknown) =>
     new TaskFolderError({ operation: "read", detail: "Could not read task folders.", cause });
+  const writeFailed = (cause: unknown) =>
+    new TaskFolderError({ operation: "write", detail: "Could not write task folders.", cause });
 
   const ancestors = (target: string) => {
     const result = [target];
@@ -126,18 +128,21 @@ const make = Effect.gen(function* () {
         )
         ON CONFLICT (root) DO UPDATE SET
           real_root = excluded.real_root,
+          project_id = excluded.project_id,
+          project_root = excluded.project_root,
+          anchor = excluded.anchor,
           project_path = excluded.project_path,
           project_is_worktree = excluded.project_is_worktree,
           repositories_json = excluded.repositories_json
       `;
-  }, Effect.mapError(failed));
+  }, Effect.mapError(writeFailed));
 
   return TaskFolderStore.of({
     findContaining,
     list: listRows(undefined).pipe(Effect.mapError(failed)),
     put,
     remove: Effect.fn("TaskFolderStore.remove")(function* (root) {
-      yield* sql`DELETE FROM task_folders WHERE root = ${root}`.pipe(Effect.mapError(failed));
+      yield* sql`DELETE FROM task_folders WHERE root = ${root}`.pipe(Effect.mapError(writeFailed));
     }),
   });
 });

@@ -101,7 +101,7 @@ export type WorkspaceAddTaskFolderRepositoryInput =
   typeof WorkspaceAddTaskFolderRepositoryInput.Type;
 
 export class TaskFolderError extends Schema.TaggedError<TaskFolderError>()("TaskFolderError", {
-  operation: Schema.Literals(["plan", "create", "add-repository", "remove", "read"]),
+  operation: Schema.Literals(["plan", "create", "add-repository", "remove", "read", "write"]),
   detail: Schema.String,
   cause: Schema.optional(Schema.Defect()),
 }) {

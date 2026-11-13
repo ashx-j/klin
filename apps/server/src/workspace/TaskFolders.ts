@@ -499,6 +499,8 @@ const make = Effect.gen(function* () {
     // Made, not only checked: of two creations that pick one name, the second takes the next.
     for (let suffix = 1; ; suffix++) {
       const root = suffix === 1 ? base : `${base}-${suffix}`;
+      // Cleanup can remove a folder and keep its record, to put it back when its thread resumes.
+      if ((yield* store.findContaining(root)) !== null) continue;
       const reserved = yield* fileSystem.makeDirectory(root).pipe(
         Effect.as(true),
         Effect.catchIf(
