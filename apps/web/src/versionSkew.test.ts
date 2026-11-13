@@ -114,10 +114,15 @@ describe("versionSkew", () => {
     });
   });
 
-  it("offers no update between Klin and T3 Code servers", () => {
+  it("updates Klin servers to newer Klin builds and never across to T3 Code", () => {
     branding.APP_VERSION = "0.1.10-klin.9";
     expect(resolveVersionMismatch("0.1.9")).toBeNull();
     expect(resolveVersionMismatch("0.1.9-klin.5")).toMatchObject({ serverVersion: "0.1.9-klin.5" });
+    expect(resolveVersionMismatch("0.1.10-klin.8")).toMatchObject({
+      serverVersion: "0.1.10-klin.8",
+    });
+    expect(resolveVersionMismatch("0.1.10-klin.9")).toBeNull();
+    expect(resolveVersionMismatch("0.1.10-klin.10")).toBeNull();
 
     branding.APP_VERSION = "0.1.11";
     expect(resolveVersionMismatch("0.1.10-klin.9")).toBeNull();

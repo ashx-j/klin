@@ -18,6 +18,8 @@ on:
       - .env.example
       - .github/workflows/klin-release.yml
       - .github/actions/setup-ci-deps/**
+      - apps/server/src/cloud/publicConfig.ts
+      - apps/server/vite.config.ts
       - packages/shared/src/appIdentity.ts
       - packages/ssh/src/tunnel.ts
       - scripts/build-cli-archive.ts
@@ -140,11 +142,12 @@ jobs:
         run: node scripts/smoke-cli-archive.ts --archive release-cli/* --expect-version "${{ steps.version.outputs.version }}"
 
       # `status --json` reports `connect: null` when a build change stops building T3 Connect in.
+      # `env -i` hides this job's T3CODE_* variables, which the server would otherwise read at runtime.
       - name: Check the server archive has T3 Connect
         run: |
           dir="$(mktemp -d)"
           tar -xzf release-cli/*.tar.gz -C "$dir"
-          HOME="$dir" "$dir"/t3-*/t3 status --json \
+          env -i HOME="$dir" "$dir"/t3-*/t3 status --json \
             | node -e 'if (JSON.parse(require("node:fs").readFileSync(0, "utf8")).connect === null) throw new Error("The server archive has no T3 Connect config")'
 
       # Unsigned. GITHUB_REPOSITORY points the app's update feed at this repository's releases.

@@ -8,7 +8,7 @@ Each push to `main` publishes a Windows installer and a Linux server archive on 
 
 ## Using Klin from T3 Code's phone app
 
-On a Linux machine, download the newest server archive and run its `connect` command:
+On a Linux machine with `gh` signed in (`gh auth login`), download the newest server archive and run its `connect` command:
 
 ```bash
 dir="$(mktemp -d)"
@@ -17,7 +17,7 @@ tar -xzf "$dir"/t3-*-linux-x64.tar.gz -C "$dir"
 "$dir"/t3-*-linux-x64/t3 connect
 ```
 
-It signs in to T3 Connect with your T3 account and runs Klin as the `klin.service` user service, with its data in `~/.klin`. Over SSH it prints a link and a code to approve on any device. In T3 Code's phone app, the machine appears as "<machine name> (Klin)", next to any T3 Code server on the same machine. Each machine with T3 Connect counts toward your T3 account's machine limit. When T3 Code publishes a release that Klin hasn't merged yet, the phone app offers Klin servers an update to it, which fails. The offer goes away once a Klin release includes that version.
+It signs in to T3 Connect with your T3 account and runs Klin as the `klin.service` user service, with its data in `~/.klin`. Over SSH it prints a link and a code to approve on any device. In T3 Code's phone app, the machine appears as "<machine name> (Klin)", next to any T3 Code server on the same machine. Each machine with T3 Connect counts toward your T3 account's machine limit. When T3 Code publishes a release that Klin hasn't merged yet, T3 Code's apps offer Klin servers an update to it, which fails. The offer goes away once a Klin release includes that version.
 
 For the Windows desktop app, run `klin connect link` in a terminal, then restart Klin. Settings can put the `klin` command on your PATH. T3 Connect accepts in-app sign-in only from T3 Code's own desktop app, so Klin's desktop app has no T3 Connect settings. `klin connect status` shows the link, and `klin connect unlink` turns it off.
 
