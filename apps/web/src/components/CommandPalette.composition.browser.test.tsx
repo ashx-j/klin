@@ -9,8 +9,11 @@ import { openCommandPalette } from "../commandPaletteBus";
 import { primaryServerKeybindingsAtom } from "../state/server";
 
 const scopes = vi.hoisted(() => ({ denied: undefined as string | undefined }));
+const folderScans = vi.hoisted(() => ({ started: 0, finished: Promise.resolve() }));
 const setup = (deniedScope?: string) => {
   scopes.denied = deniedScope;
+  folderScans.started = 0;
+  folderScans.finished = Promise.resolve();
 };
 
 vi.mock("@effect/atom-react", async (original) => ({
@@ -50,7 +53,13 @@ vi.mock("../state/use-atom-command", () => ({
 }));
 vi.mock("../state/use-atom-query-runner", () => ({
   // Doubles as the add-project folder scan, which finds nothing to track.
-  useAtomQueryRunner: () => async () => ({ _tag: "Success", value: { folders: [] } }),
+  useAtomQueryRunner: () => async (request: { readonly input: object }) => {
+    if ("workspaceRoot" in request.input) {
+      folderScans.started += 1;
+      await folderScans.finished;
+    }
+    return { _tag: "Success", value: { folders: [] } };
+  },
 }));
 vi.mock("../state/environments", async (original) => ({
   ...(await original<typeof import("../state/environments")>()),
@@ -179,6 +188,22 @@ it.each([
     await expect.element(page.getByRole("combobox")).toHaveAccessibleDescription(description);
   },
 );
+
+it("adds a folder once when Enter repeats during its repository scan", async () => {
+  setup();
+  let finishScan = () => {};
+  folderScans.finished = new Promise<void>((resolve) => {
+    finishScan = resolve;
+  });
+  await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+  await act(() => openCommandPalette({ open: "add-project" }));
+  await page.getByText("Local folder", { exact: true }).click();
+  await page.getByRole("combobox").fill("/workspace/project");
+  await userEvent.keyboard("{Enter}{Enter}");
+  expect(folderScans.started).toBe(1);
+  finishScan();
+  await expect.element(page.getByRole("combobox")).not.toBeInTheDocument();
+});
 
 it("keeps the caret in place when an edit briefly makes the folder path not a path", async () => {
   setup();

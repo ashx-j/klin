@@ -553,6 +553,8 @@ function OpenCommandPaletteDialog(props: {
   const [isCreatingNewProject, setIsCreatingNewProject] = useState(false);
   // State lags a render behind, so a repeated Enter could start a second create.
   const newProjectSubmittingRef = useRef(false);
+  // A second add during the folder scan would replace the first one's pending folder choice.
+  const addProjectSubmittingRef = useRef(false);
   const createNewProject = useNewProject();
   const cloneLookupGeneration = useRef(0);
   const [isRemoteProjectLookingUp, setIsRemoteProjectLookingUp] = useState(false);
@@ -1882,7 +1884,7 @@ function OpenCommandPaletteDialog(props: {
     now: searchNow,
   });
 
-  const handleAddProjectForEnvironment = async (input: {
+  const addProjectForEnvironment = async (input: {
     readonly environmentId: EnvironmentId;
     readonly rawCwd: string;
     readonly platform: string;
@@ -2038,6 +2040,17 @@ function OpenCommandPaletteDialog(props: {
       return;
     }
     setOpen(false);
+  };
+
+  const handleAddProjectForEnvironment = async (
+    input: Parameters<typeof addProjectForEnvironment>[0],
+  ) => {
+    if (addProjectSubmittingRef.current) return;
+    addProjectSubmittingRef.current = true;
+    // React Compiler cannot compile try/finally without catch.
+    await addProjectForEnvironment(input).finally(() => {
+      addProjectSubmittingRef.current = false;
+    });
   };
 
   const handleAddProject = async (rawCwd: string) => {
