@@ -3793,7 +3793,8 @@ export default function ChatView(props: ChatViewProps) {
                                   worktreePath={activeThread.worktreePath}
                                   isServerThread={isServerThread}
                                   showGitControls={
-                                    isGitRepo || worktreeRepositoryChoices.tracksGitRepositories
+                                    isGitRepo ||
+                                    worktreeRepositoryChoices.tracksGitRepositories !== false
                                   }
                                   showBranchControls={isGitRepo}
                                   {...(routeKind === "draft" && draftId ? { draftId } : {})}

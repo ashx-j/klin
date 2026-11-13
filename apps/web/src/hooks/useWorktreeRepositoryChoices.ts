@@ -10,13 +10,21 @@ import { useEnvironmentQuery } from "~/state/query";
 interface WorktreeRepositoryChoices {
   /** The project's tracked Git folders. Null while they load or when they cannot be read. */
   readonly choices: ReadonlyArray<WorktreeRepositoryChoice> | null;
-  /** Whether a worktree thread has a repository to work in besides the project folder. */
-  readonly tracksGitRepositories: boolean;
+  /**
+   * Whether a worktree thread has a repository to work in besides the project folder. Null
+   * while the folders load or cannot be read.
+   */
+  readonly tracksGitRepositories: boolean | null;
 }
 
 const NO_TRACKED_FOLDERS: WorktreeRepositoryChoices = Object.freeze({
   choices: Object.freeze([]),
   tracksGitRepositories: false,
+});
+
+const UNKNOWN_TRACKED_FOLDERS: WorktreeRepositoryChoices = Object.freeze({
+  choices: null,
+  tracksGitRepositories: null,
 });
 
 /**
@@ -39,10 +47,7 @@ export function useWorktreeRepositoryChoices(
       : null,
   );
   if (project === null || !tracksFolders) return NO_TRACKED_FOLDERS;
-  if (folders.data === null) {
-    // Until the folders arrive the tracked list stands in, as the checkout's Git state does.
-    return { choices: null, tracksGitRepositories: folders.error === null };
-  }
+  if (folders.data === null) return UNKNOWN_TRACKED_FOLDERS;
   const choices = worktreeRepositoryChoices({
     folders: folders.data.folders,
     projectRoot: project.workspaceRoot,
