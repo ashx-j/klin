@@ -99,7 +99,12 @@ export class TaskFolders extends Context.Service<
         readonly total: number;
       }) => Effect.Effect<void>;
     }) => Effect.Effect<
-      { readonly taskFolder: TaskFolder; readonly branch: string },
+      {
+        readonly taskFolder: TaskFolder;
+        readonly branch: string;
+        /** Whether a repository's checkout started from a commit fetched from its remote. */
+        readonly startedFromOrigin: boolean;
+      },
       TaskFolderError
     >;
     /**
@@ -324,8 +329,12 @@ const make = Effect.gen(function* () {
         ? yield* git.fetchWorktreeBaseCommit({ cwd, refName: baseRef })
         : null;
     return remoteBase === null
-      ? { refName: baseRef, baseRefName: baseRef }
-      : { refName: remoteBase.commitSha, baseRefName: `refs/remotes/${remoteBase.remoteRefName}` };
+      ? { refName: baseRef, baseRefName: baseRef, startedFromOrigin: false }
+      : {
+          refName: remoteBase.commitSha,
+          baseRefName: `refs/remotes/${remoteBase.remoteRefName}`,
+          startedFromOrigin: true,
+        };
   });
 
   // Never a link: what goes in one lands in the original.
@@ -591,6 +600,7 @@ const make = Effect.gen(function* () {
       baseRefName: start.baseRefName,
       path: checkout.worktreePath,
     });
+    return start.startedFromOrigin;
   });
 
   const create: TaskFolders["Service"]["create"] = Effect.fn("TaskFolders.create")(
@@ -664,6 +674,7 @@ const make = Effect.gen(function* () {
                 isWithinRoot(path, checkout.repositoryPath, other.repositoryPath),
             ).length,
         );
+        let startedFromOrigin = false;
         for (const level of [...levels.keys()].toSorted((left, right) => left - right)) {
           // Every checkout runs to its end: one stopped halfway is registered in its repository
           // without being known here, so nothing would remove it.
@@ -690,8 +701,9 @@ const make = Effect.gen(function* () {
           ).pipe(Effect.uninterruptible);
           const failed = exits.find(Exit.isFailure);
           if (failed !== undefined) return yield* Effect.failCause(failed.cause);
+          startedFromOrigin ||= exits.some((exit) => Exit.isSuccess(exit) && exit.value);
         }
-        return { taskFolder: planned, branch };
+        return { taskFolder: planned, branch, startedFromOrigin };
       }).pipe(
         Effect.onError(() =>
           // The record first drops checkouts never made, so what removal keeps matches the disk.

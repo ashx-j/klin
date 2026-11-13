@@ -80,6 +80,7 @@ const tracked = (...folders: ReadonlyArray<string>): ReadonlyArray<ProjectTracke
 const create = Effect.fnUntraced(function* (
   branch: string,
   repositories?: ReadonlyArray<{ readonly path: string }>,
+  startFromOrigin = false,
 ) {
   const taskFolders = yield* TaskFolders.TaskFolders;
   const plan = yield* taskFolders.plan({ projectId, repositories });
@@ -88,7 +89,7 @@ const create = Effect.fnUntraced(function* (
     plan: plan!,
     branch,
     projectStart: { refName: "main", baseRefName: "main" },
-    startFromOrigin: false,
+    startFromOrigin,
   });
 });
 
@@ -381,6 +382,30 @@ it.live("gives every repository one branch name when one of them already has it"
       assert.equal(
         yield* run(path.join(taskFolder.root, "web"), "symbolic-ref", "--short", "HEAD"),
         "fix-login-2",
+      );
+    }),
+  ),
+);
+
+it.live("reports whether a repository started from the commit its remote has", () =>
+  withState((state) =>
+    Effect.gen(function* () {
+      const { path, tmp, run, repository } = yield* fixture;
+      const api = yield* repository("shop/api");
+      const remote = path.join(tmp, "api.git");
+      yield* run(tmp, "init", "--bare", "-b", "main", remote);
+      yield* run(api, "remote", "add", "origin", remote);
+      yield* run(api, "push", "-u", "origin", "main");
+      yield* run(api, "commit", "--allow-empty", "-m", "local only");
+      state.workspaceRoot = path.join(tmp, "shop");
+      state.trackedFolders = tracked(api);
+
+      const { taskFolder, startedFromOrigin } = yield* create("feature", undefined, true);
+
+      assert.isTrue(startedFromOrigin);
+      assert.equal(
+        yield* run(taskFolder.repositories[0]!.worktreePath, "rev-parse", "HEAD"),
+        yield* run(api, "rev-parse", "origin/main"),
       );
     }),
   ),

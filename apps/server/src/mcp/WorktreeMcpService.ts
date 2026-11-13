@@ -265,6 +265,7 @@ const make = Effect.gen(function* () {
                 readonly path: string;
                 readonly refName: string;
                 readonly taskFolder: string | null;
+                readonly startedFromOrigin: boolean;
               },
               GitCommandError | TaskFolderError
             > =>
@@ -277,7 +278,13 @@ const make = Effect.gen(function* () {
                       baseRefName,
                       path: null,
                     })
-                    .pipe(Effect.map((created) => ({ ...created.worktree, taskFolder: null })))
+                    .pipe(
+                      Effect.map((created) => ({
+                        ...created.worktree,
+                        taskFolder: null,
+                        startedFromOrigin: false,
+                      })),
+                    )
                 : taskFolders
                     .create({
                       plan: taskPlan,
@@ -290,6 +297,7 @@ const make = Effect.gen(function* () {
                         path: created.taskFolder.projectPath,
                         refName: created.branch,
                         taskFolder: created.taskFolder.root,
+                        startedFromOrigin: created.startedFromOrigin,
                       })),
                     ),
           ).pipe(asOperationFailed("Unable to create the worktree")),
@@ -436,7 +444,7 @@ const make = Effect.gen(function* () {
           worktreePath,
           branch: worktree.refName,
           baseRef,
-          startedFromOrigin,
+          startedFromOrigin: startedFromOrigin || worktree.startedFromOrigin,
           setupScript,
           continuation,
           note:
