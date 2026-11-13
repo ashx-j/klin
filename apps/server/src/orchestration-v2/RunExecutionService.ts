@@ -399,6 +399,9 @@ export function routeProviderEvent(
         event.appThread.lineage.parentThreadId !== null &&
         ownsThread(event.appThread.lineage.parentThreadId) &&
         (!state.rootTurnEnded ||
+          // Matches the runless nested adoption in subagent.updated below.
+          (state.adoptsChildrenAfterRootTurn &&
+            ownsChildThread(event.appThread.lineage.parentThreadId)) ||
           state.workflowMemberParents.get(event.appThread.id) ===
             event.appThread.lineage.parentThreadId);
       if (!isOwnedSubagent) {
@@ -1417,7 +1420,12 @@ export const layer: Layer.Layer<
             event.providerTurn.runAttemptId !== null &&
             event.providerTurn.runAttemptId !== input.attempt.id &&
             (event.threadId === input.run.threadId ||
-              event.providerTurn.providerThreadId === input.providerThread.id)
+              event.providerTurn.providerThreadId === input.providerThread.id) &&
+            // An earlier run's late update on this provider thread is not a newer turn.
+            !(
+              event.providerTurn.providerThreadId === input.providerThread.id &&
+              event.providerTurn.ordinal <= input.providerTurnOrdinal
+            )
           ) {
             newerRootTurnSeen = true;
           }

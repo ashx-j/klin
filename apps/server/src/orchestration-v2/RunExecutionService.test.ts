@@ -350,6 +350,21 @@ it("routes only enrolled workflow members after the root turn ends", () => {
       ThreadId.make("thread:late-child:unrelated-descendant"),
     ),
   );
+
+  // A provider that resumes children after the root turn adopts their runless nested tasks,
+  // so it must also take the thread an owned child creates then, but not a new root child.
+  const resuming = { ...ended, adoptsChildrenAfterRootTurn: true };
+  const lateNested = ThreadId.make("thread:late-child:late-nested");
+  const [lateNestedAccepted, afterLateNested] = RunExecutionService.routeProviderEvent(
+    childCreated(lateNested, earlyChild),
+    identity,
+    resuming,
+  );
+  assert.isTrue(lateNestedAccepted);
+  assert.isTrue(afterLateNested.ownedThreadIds.has(lateNested));
+  assert.isFalse(
+    RunExecutionService.routeProviderEvent(childCreated(lateChild), identity, resuming)[0],
+  );
 });
 
 it("moves a child thread to the run that shows its subagent now", () => {
@@ -1705,11 +1720,12 @@ it.effect.each([
   ["nested child reopened after", true, "late", true],
   ["child reopened after, without provider support,", false, "late", false],
   ["nested child reopened before, without provider support,", true, "early", false],
+  ["child reopened after an older turn's late update and after", false, "late", true, true],
 ] as const)(
   "ingests a %s the root turn ends until a newer root turn",
-  ([, nested, reopen, resumesChildrenAfterRootTurn]) =>
+  ([, nested, reopen, resumesChildrenAfterRootTurn, olderTurnUpdate = false]) =>
     Effect.gen(function* () {
-      const key = `run-execution-restored-child-${nested ? "nested" : "direct"}-${reopen}-${resumesChildrenAfterRootTurn}`;
+      const key = `run-execution-restored-child-${nested ? "nested" : "direct"}-${reopen}-${resumesChildrenAfterRootTurn}${olderTurnUpdate ? "-older" : ""}`;
       const threadId = ThreadId.make(`thread:${key}`);
       const runId = RunId.make(`run:${key}`);
       const attemptId = RunAttemptId.make(`attempt:${key}`);
@@ -1779,6 +1795,23 @@ it.effect.each([
       const leaf = child("leaf", middle.childThreadId, null);
       const resumed = nested ? leaf : middle;
       const events: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event> = [
+        // The previous run's turn on this provider thread can still report after this one starts.
+        ...(olderTurnUpdate
+          ? [
+              {
+                type: "provider_turn.updated",
+                driver,
+                threadId,
+                providerTurn: {
+                  id: ProviderTurnId.make(`provider-turn:${key}:previous`),
+                  providerThreadId,
+                  runAttemptId: RunAttemptId.make(`attempt:${key}:previous`),
+                  ordinal: 1,
+                  status: "interrupted",
+                },
+              } as ProviderAdapter.ProviderAdapterV2Event,
+            ]
+          : []),
         ...(reopen === "early" ? [middle.task("running")] : []),
         {
           type: "turn.terminal",
@@ -1807,6 +1840,7 @@ it.effect.each([
             id: ProviderTurnId.make(`provider-turn:${key}:next`),
             providerThreadId,
             runAttemptId: RunAttemptId.make(`attempt:${key}:next`),
+            ordinal: 3,
             status: "running",
           },
         } as ProviderAdapter.ProviderAdapterV2Event,
@@ -1872,7 +1906,7 @@ it.effect.each([
             providerTurnId: rootProviderTurnId,
           } as OrchestrationV2RunAttempt,
           attemptId,
-          providerTurnOrdinal: 1,
+          providerTurnOrdinal: 2,
           message: {
             messageId: MessageId.make(`message:${key}:user`),
             text: "Follow up with the child.",
