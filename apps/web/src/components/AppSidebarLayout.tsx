@@ -48,6 +48,7 @@ import {
   SidebarChromeFooter,
   SidebarChromeHeader,
 } from "./sidebar/SidebarChrome";
+import { SidebarFolderDrop } from "./sidebar/SidebarFolderDrop";
 import {
   isAppModalPage,
   shownAppPageAtom,
@@ -68,6 +69,7 @@ import {
   SidebarProvider,
   SidebarRail,
   SidebarTrigger,
+  useMobileSidebarSheetMounted,
   useSidebar,
   useSidebarVisibility,
 } from "./ui/sidebar";
@@ -337,7 +339,8 @@ function SidebarControl({ showSidebar }: { readonly showSidebar: boolean }) {
   const router = useRouter();
   const usagePageOpen = useLocation({ select: (location) => location.pathname === "/usage" });
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
-  const { toggleSidebar, isMobile, mobileSheetMounted } = useSidebar();
+  const { toggleSidebar } = useSidebar();
+  const mobileSidebarSheetMounted = useMobileSidebarSheetMounted();
   const isSidebarVisible = useSidebarVisibility();
   const environmentIdentificationMode = useEnvironmentIdentificationMode();
   const stageBackdropVariant = useSidebarStageBackdropVariant(environmentIdentificationMode);
@@ -399,7 +402,7 @@ function SidebarControl({ showSidebar }: { readonly showSidebar: boolean }) {
       ref={appShellCommandsRef}
       className={cn(
         "pointer-events-none fixed left-[var(--workspace-controls-left)] top-[var(--workspace-controls-top)] z-50 ml-px flex h-[var(--workspace-topbar-height)] items-center",
-        isMobile && mobileSheetMounted && "hidden",
+        mobileSidebarSheetMounted && "hidden",
       )}
       data-sidebar-control=""
     >
@@ -456,25 +459,28 @@ function AppSidebarContent({ routeReveal }: { routeReveal: SidebarRouteReveal })
   const threads = <ThreadSidebar routeReveal={routeReveal} />;
   const footer = <SidebarChromeFooter />;
   return (
-    <PluginPart
-      part="app.sidebar"
-      pieces={{
-        original: (
-          <>
-            {header}
-            {threads}
-            {footer}
-          </>
-        ),
-        header,
-        threads,
-        footer,
-        back: <SidebarChromeFooter utility="back" />,
-        update: <SidebarChromeFooter utility="none" />,
-        nav: page === "settings" ? <SidebarSettingsNav /> : null,
-        page,
-      }}
-    />
+    // Covers the header and footer too, so a folder dropped anywhere on the sidebar adds a project.
+    <SidebarFolderDrop>
+      <PluginPart
+        part="app.sidebar"
+        pieces={{
+          original: (
+            <>
+              {header}
+              {threads}
+              {footer}
+            </>
+          ),
+          header,
+          threads,
+          footer,
+          back: <SidebarChromeFooter utility="back" />,
+          update: <SidebarChromeFooter utility="none" />,
+          nav: page === "settings" ? <SidebarSettingsNav /> : null,
+          page,
+        }}
+      />
+    </SidebarFolderDrop>
   );
 }
 
