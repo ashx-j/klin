@@ -4,6 +4,7 @@ import {
   ProjectId,
   type Project,
   type ProjectCreatePayload,
+  type ProjectTrackedFolder,
   type ProjectUpdatePayload,
   type ProjectSnapshot,
   type ThreadId,
@@ -15,6 +16,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
@@ -35,6 +37,7 @@ import { planThreadDeletion } from "../orchestration-v2/ThreadDeletion.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { makeIsManagedWorktreePath } from "../worktreesDirectory.ts";
 import * as ProjectEnrichmentService from "./ProjectEnrichmentService.ts";
+import { isWithinRoot } from "../workspace/KnownWorkspaces.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 
 export interface ProjectCreateInput extends ProjectCreatePayload {
@@ -181,6 +184,7 @@ export const make = Effect.gen(function* () {
   const threadCommands = yield* ThreadCommandExecutor.ThreadCommandExecutor;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   const isManagedWorktreePath = yield* makeIsManagedWorktreePath;
   const projectLocks = yield* KeyedLock.make<ProjectId>();
   const workspaceLocks = yield* KeyedLock.make<string>();
@@ -199,6 +203,7 @@ export const make = Effect.gen(function* () {
     autoPull: row.autoPull,
     projectIcon: row.projectIcon,
     scripts: row.scripts,
+    trackedFolders: row.trackedFolders,
     pinnedAt: row.pinnedAt,
     archivedAt: row.archivedAt,
     createdAt: row.createdAt,
@@ -243,6 +248,34 @@ export const make = Effect.gen(function* () {
             }),
         ),
       );
+
+  // A folder may be missing from disk: it shows as missing until it is restored or removed.
+  const normalizeTrackedFolders = (
+    projectId: ProjectId,
+    workspaceRoot: string,
+    folders: ReadonlyArray<ProjectTrackedFolder>,
+  ) => {
+    const invalid = (detail: string) => Effect.fail(new ProjectInvalidError({ projectId, detail }));
+    const normalized: Array<ProjectTrackedFolder> = [];
+    for (const folder of folders) {
+      if (!path.isAbsolute(folder.path)) {
+        return invalid(`Tracked folder '${folder.path}' must be an absolute path.`);
+      }
+      const folderPath = path.resolve(folder.path);
+      if (isWithinRoot(path, workspaceRoot, folderPath)) {
+        return invalid(
+          folderPath === workspaceRoot
+            ? "The project's own folder is always part of it; track other folders."
+            : `Tracked folder '${folderPath}' contains the project's own folder.`,
+        );
+      }
+      if (normalized.some((existing) => existing.path === folderPath)) {
+        return invalid(`Tracked folder '${folderPath}' is listed twice.`);
+      }
+      normalized.push({ path: folderPath, name: folder.name });
+    }
+    return Effect.succeed(normalized);
+  };
 
   const commit = Effect.fn("ProjectService.commit")(function* (command: ProjectCommand) {
     const { projectId } = command;
@@ -383,6 +416,10 @@ export const make = Effect.gen(function* () {
         workspaceRoot: input.workspaceRoot,
         createIfMissing: input.createWorkspaceRootIfMissing ?? false,
       });
+      const trackedFolders =
+        input.trackedFolders === undefined
+          ? undefined
+          : yield* normalizeTrackedFolders(input.projectId, workspaceRoot, input.trackedFolders);
       yield* commit({
         type: "project.create",
         commandId: input.commandId,
@@ -390,6 +427,7 @@ export const make = Effect.gen(function* () {
         title: input.title,
         workspaceRoot,
         ...(input.scripts === undefined ? {} : { scripts: input.scripts }),
+        ...(trackedFolders === undefined ? {} : { trackedFolders }),
       });
       yield* projectEnrichment.invalidate([workspaceRoot]);
       return yield* readCommitted(input.projectId);
@@ -410,6 +448,15 @@ export const make = Effect.gen(function* () {
               projectId: input.projectId,
               workspaceRoot: input.workspaceRoot,
             });
+      // Moving the project's folder re-checks the folders it keeps tracking.
+      const trackedFolders =
+        input.trackedFolders === undefined && workspaceRoot === previousRoot
+          ? undefined
+          : yield* normalizeTrackedFolders(
+              input.projectId,
+              workspaceRoot,
+              input.trackedFolders ?? existing.value.trackedFolders,
+            );
       yield* commit({
         type: "project.meta.update",
         commandId: input.commandId,
@@ -426,6 +473,9 @@ export const make = Effect.gen(function* () {
           ? {}
           : { defaultThreadEnvMode: input.defaultThreadEnvMode }),
         ...(input.scripts === undefined ? {} : { scripts: input.scripts }),
+        ...(input.trackedFolders === undefined || trackedFolders === undefined
+          ? {}
+          : { trackedFolders }),
         ...(input.pinned === undefined ? {} : { pinned: input.pinned }),
         ...(input.archived === undefined ? {} : { archived: input.archived }),
       });
