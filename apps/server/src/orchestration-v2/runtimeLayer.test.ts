@@ -65,6 +65,7 @@ import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
+import * as TaskFolderStore from "../workspace/TaskFolderStore.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
 import * as Orchestrator from "./Orchestrator.ts";
@@ -351,6 +352,7 @@ const layerTest = Layer.mergeAll(
   ProjectionStore.layer,
   EffectOutbox.layer,
   ThreadCommandExecutor.layer,
+  TaskFolderStore.layer,
 ).pipe(
   Layer.provide(McpSessionRegistryTestkit.layer),
   Layer.provide(McpProviderSessions.layer),
@@ -1532,6 +1534,31 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
             [],
           );
           assert.deepEqual(yield* outbox.listByCommandId(commandId), []);
+          if (status === "missing") {
+            // A task folder's linked project folder has no snapshot, even with nothing to restore.
+            const taskFolders = yield* TaskFolderStore.TaskFolderStore;
+            yield* taskFolders.put({
+              root: process.cwd(),
+              projectId: ProjectId.make("runtime-rollback-readiness-project"),
+              projectRoot: process.cwd(),
+              anchor: process.cwd(),
+              projectPath: process.cwd(),
+              projectIsWorktree: false,
+              repositories: [],
+            });
+            const linked = yield* orchestrator.dispatch({
+              type: "checkpoint.rollback",
+              commandId: CommandId.make("runtime-rollback-missing-linked"),
+              threadId,
+              checkpointId,
+              scopeId: scope.id,
+            });
+            assert.deepEqual(
+              linked.storedEvents.map((stored) => stored.event.type),
+              ["thread.metadata-updated", "checkpoint.rollback-requested"],
+            );
+            yield* taskFolders.remove(process.cwd());
+          }
         }
       }
     }).pipe(Effect.provide(Layer.fresh(layerTest))),

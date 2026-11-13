@@ -328,7 +328,6 @@ export const layer: Layer.Layer<
 
       if (restoreFiles && !(yield* isolated)) return yield* sharedWorkspace();
 
-      // Before the provider conversation changes: a rewind with nothing to restore is refused.
       const repositories =
         restoreFiles && taskFolder !== null
           ? yield* checkpoints.repositoryScopes({
@@ -365,11 +364,11 @@ export const layer: Layer.Layer<
           repositories: unrestorable.map((repository) => repository.cwd),
         });
       }
+      // Empty when a linked project folder's repositories are as the target left them.
       const restoreTargets = [
         ...(checkpoint.status === "ready" ? [{ scope, checkpoint }] : []),
         ...repositoryTargets,
       ];
-      if (restoreFiles && restoreTargets.length === 0) return yield* invalidTarget();
 
       const modelSelection = context.thread.modelSelection;
       const resolvedRuntimePolicy = yield* runtimePolicy.resolve({

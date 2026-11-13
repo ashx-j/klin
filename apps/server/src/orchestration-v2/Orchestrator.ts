@@ -62,7 +62,6 @@ import {
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2TurnItem,
   latestProviderTurnForAttempt,
-  repositoryRewindCheckpoint,
   parseGoalCommand,
   orchestrationV2RunWorkStartedAt,
   ProviderInstanceId,
@@ -13410,24 +13409,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                   }),
               ),
             );
-      // A task folder's linked project folder has no snapshot; its repositories can still restore.
-      const restoresRepositories =
-        taskFolder !== null &&
-        !taskFolder.projectIsWorktree &&
-        projection.checkpointScopes.some(
-          (scope) =>
-            typeof scope.repositoryPath === "string" &&
-            repositoryRewindCheckpoint(
-              projection.checkpoints.filter((candidate) => candidate.scopeId === scope.id),
-              targetCheckpoint.appRunOrdinal ?? 0,
-            ) !== null,
-        );
+      // A task folder's linked project folder has no snapshot; a file rewind restores whichever of
+      // its repositories changed after the target, if any.
+      const linkedProjectFolder = taskFolder !== null && !taskFolder.projectIsWorktree;
       // Missing snapshots otherwise support conversation rewind only.
       if (
         targetCheckpoint.status !== "ready" &&
         !(
           targetCheckpoint.status === "missing" &&
-          (command.restoreFiles === false || restoresRepositories)
+          (command.restoreFiles === false || linkedProjectFolder)
         )
       ) {
         return yield* new OrchestratorDispatchError({

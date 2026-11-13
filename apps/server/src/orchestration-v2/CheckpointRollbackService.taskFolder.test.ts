@@ -564,16 +564,15 @@ it.live("rewinds a linked project folder's repositories to how each was before t
   ),
 );
 
-it.live("refuses to restore files when a linked project folder has no repository to restore", () =>
+it.live("rewinds only the conversation when a linked project folder has no repository to restore", () =>
   withThread({ projectIsRepository: false }, (thread) =>
     Effect.gen(function* () {
       yield* thread.turn(1, Effect.void);
       yield* thread.turn(2, Effect.void);
 
-      const refused = yield* thread.rewind(1).pipe(Effect.flip);
+      yield* thread.rewind(1);
 
-      assert.equal(refused.reason, "rollback-target-invalid");
-      assert.deepEqual((yield* thread.recorded).runs, ["completed", "completed"]);
+      assert.deepEqual((yield* thread.recorded).runs, ["completed", "rolled_back"]);
     }),
   ),
 );
