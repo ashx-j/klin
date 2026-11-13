@@ -65,6 +65,7 @@ import {
   FileSearchIcon,
   FolderGit2Icon,
   FolderIcon,
+  FolderInputIcon,
   FolderPlusIcon,
   MessageSquareDashedIcon,
   LinkIcon,
@@ -101,6 +102,9 @@ import { pluginCommandsAtom } from "../plugins/pluginUi";
 import { isDesktopLocalConnectionTarget } from "../connection/desktopLocal";
 import { useDesktopLocalBootstraps } from "../connection/useDesktopLocalBootstraps";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
+import { useMoveThreadToProject } from "../hooks/useMoveThreadToProject";
+import { threadRuntimeCanArchive } from "@t3tools/client-runtime/state/models";
+import { threadMoveTargets } from "./threadActionMenu.logic";
 import { useOpenPanelPullRequestUrl } from "../hooks/useOpenPanelPullRequestUrl";
 import { copyThreadReference } from "../lib/copyThreadReference";
 import {
@@ -496,6 +500,12 @@ function OpenCommandPaletteDialog(props: {
   const openPanelPullRequestUrl = useOpenPanelPullRequestUrl(referenceThreadRef);
   const activeThreadServerConfig = useServerConfigs().get(
     activeThread?.environmentId ?? ("" as EnvironmentId),
+  );
+  const moveThreadToProject = useMoveThreadToProject();
+  const canMoveActiveThread = useAtomValue(
+    projectEnvironment.moveThread.permissionAtom(
+      activeThread?.environmentId ?? ("" as EnvironmentId),
+    ),
   );
   const canShareActiveThreadWithGuest = useAtomValue(
     canShareWithGuestAtom(activeThread?.environmentId ?? ("" as EnvironmentId)),
@@ -1471,6 +1481,42 @@ function OpenCommandPaletteDialog(props: {
       run: async () => {
         useRightPanelStore.getState().open(threadRef, "pull-requests");
       },
+    });
+  }
+
+  const activeThreadMoveTargets =
+    activeThread === null
+      ? []
+      : threadMoveTargets(
+          activeThread,
+          projects,
+          activeThreadServerConfig?.environment.capabilities.threadProjectMove,
+        );
+  if (activeThread !== null && activeThreadMoveTargets.length > 0) {
+    const threadRef = scopeThreadRef(activeThread.environmentId, activeThread.id);
+    actionItems.push({
+      kind: "submenu",
+      value: "action:move-thread-to-project",
+      searchTerms: ["move", "project", "thread", "transfer"],
+      title: "Move thread to project...",
+      icon: <FolderInputIcon className={ITEM_ICON_CLASS} />,
+      addonIcon: <FolderInputIcon className={ADDON_ICON_CLASS} />,
+      disabled: !canMoveActiveThread || !threadRuntimeCanArchive(activeThread.runtime),
+      groups: [
+        {
+          value: "move-thread-to-project",
+          label: "Projects",
+          items: activeThreadMoveTargets.map((project) => ({
+            kind: "action" as const,
+            value: `move-thread-to-project:${project.id}`,
+            searchTerms: [project.title, project.workspaceRoot],
+            title: project.title,
+            description: project.workspaceRoot,
+            icon: <FolderIcon className={ITEM_ICON_CLASS} />,
+            run: () => moveThreadToProject(threadRef, project),
+          })),
+        },
+      ],
     });
   }
 

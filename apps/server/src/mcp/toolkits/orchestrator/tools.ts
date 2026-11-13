@@ -35,6 +35,7 @@ import {
   OrchestratorMcpThreadWaitInput,
   OrchestratorMcpThreadWaitResult,
   ThreadMetadataMcpUpdateInput,
+  ThreadMetadataMcpMoveResult,
   ThreadMetadataMcpUpdateResult,
   TrimmedNonEmptyString,
 } from "@t3tools/contracts";
@@ -260,13 +261,13 @@ const ThreadReadTool = Tool.make("t3_thread_read", {
 
 const ThreadUpdateTool = Tool.make("t3_thread_update", {
   description:
-    "Rename a thread (`action:'rename'` with `title`) or regenerate its title. Omit `threadId` for this thread. Workspace and branch cannot change here.",
+    "Rename a thread (`action:'rename'` with `title`), regenerate its title, or move it to another project (`action:'move_project'` with `projectId` from `t3_project_list`). Omit `threadId` for this thread. Moving this thread applies when your turn ends. A worktree thread moves only within its repository. Branch and other workspace changes are not supported here.",
   // Keeps the input's action/field check, which rebuilding the struct would drop.
   parameters: ThreadMetadataMcpUpdateInput.mapFields(
     Struct.assign({ environmentId: OrchestratorMcpEnvironmentTarget }),
     { unsafePreserveChecks: true },
   ),
-  success: ThreadMetadataMcpUpdateResult,
+  success: Schema.Union([ThreadMetadataMcpUpdateResult, ThreadMetadataMcpMoveResult]),
   failure: OrchestratorMcpFailure,
   failureMode: "return",
   dependencies: threadMetadataDependencies,

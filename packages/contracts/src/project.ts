@@ -551,6 +551,23 @@ export const ProjectCreateFromThreadResult = Schema.Struct({
 });
 export type ProjectCreateFromThreadResult = typeof ProjectCreateFromThreadResult.Type;
 
+export const ProjectMoveThreadInput = Schema.Struct({
+  threadId: ThreadId,
+  projectId: ProjectId,
+});
+export type ProjectMoveThreadInput = typeof ProjectMoveThreadInput.Type;
+
+export const ProjectMoveThreadResult = Schema.Struct({
+  projectId: ProjectId,
+  /** The worktree the thread kept, or null when it now works in the project root. */
+  worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  /** A No project chat's folder the thread left behind. Its files stay there. */
+  scratchFolder: Schema.optional(TrimmedNonEmptyString),
+  /** Set when the thread's own agent asked mid-turn; the move applies when that turn completes. */
+  movesWhenTurnEnds: Schema.optional(Schema.Literal(true)),
+});
+export type ProjectMoveThreadResult = typeof ProjectMoveThreadResult.Type;
+
 export class ProjectWriteFileError extends Schema.TaggedError<ProjectWriteFileError>()(
   "ProjectWriteFileError",
   {

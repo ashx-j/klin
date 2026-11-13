@@ -3528,6 +3528,15 @@ const OrchestrationV2InternalCommand = Schema.Union([
     text: Schema.String,
     attachments: Schema.optional(Schema.Array(ChatAttachment)),
   }),
+  /** Moves a thread to another project. ThreadProjectMove checks repositories before dispatching it. */
+  Schema.Struct({
+    type: Schema.Literal("thread.project.move"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    projectId: ProjectId,
+    /** Drops the thread's own folder so it works in the destination's root; the folder stays on disk. */
+    clearWorktreePath: Schema.Boolean,
+  }),
   /** Moves a thread to a project rooted at the folder it already works in, so its cwd never changes. */
   Schema.Struct({
     type: Schema.Literal("thread.project.adopt-folder"),
