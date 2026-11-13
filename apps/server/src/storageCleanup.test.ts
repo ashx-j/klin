@@ -793,6 +793,7 @@ it.live("removes a task folder's clean worktrees and keeps the one with uncommit
         },
         { path: `${root}/dist/web`, outcome: "removed", reason: expect.any(String) },
       ]);
+      expect(report.bytesFreed).toBeGreaterThan(0);
       expect(yield* fs.readFileString(`${root}/dist/api/tracked.txt`)).toBe("uncommitted\n");
       expect(yield* fs.exists(`${root}/dist/web`)).toBe(false);
       // The thread is alive, so the record keeps the whole layout for when it resumes.
