@@ -95,8 +95,9 @@ type ContextCheckpoint = ProjectionCheckpointContext["checkpoints"][number];
 
 /**
  * A repository's checkpoints for a turn range. Only turns that changed it are recorded, each with
- * the baseline before it, so the range runs from its first record to its last one inside the
- * range. None when no turn in the range changed it.
+ * the baseline before it, so the range runs from its first record to the last turn's own one. A
+ * runless baseline holds the folder as the next turn found it, so it never ends a range. None when
+ * no turn in the range changed it.
  */
 function repositoryDiffRange(
   checkpoints: ReadonlyArray<ContextCheckpoint>,
@@ -111,7 +112,7 @@ function repositoryDiffRange(
     )
     .toSorted((left, right) => left.ordinalWithinScope - right.ordinalWithinScope);
   const from = ready[0];
-  const to = ready.at(-1);
+  const to = ready.findLast((checkpoint) => checkpoint.runId !== null);
   return from === undefined || to === undefined || from === to ? undefined : { from, to };
 }
 

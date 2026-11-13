@@ -348,7 +348,12 @@ it.effect("preserves an exact-fit filtered patch across batches without a marker
 
 it.effect("adds a patch for each tracked repository that changed in the range", () => {
   const projection = makeProjection();
-  const repository = (name: string, cwd: string, ordinals: ReadonlyArray<number>) => {
+  const repository = (
+    name: string,
+    cwd: string,
+    ordinals: ReadonlyArray<number>,
+    runIds: ReadonlyMap<number, RunId> = new Map([[2, secondRunId]]),
+  ) => {
     const id = CheckpointScopeId.make(`scope:checkpoint-diff-v2:${name}`);
     return {
       scope: {
@@ -361,7 +366,7 @@ it.effect("adds a patch for each tracked repository that changed in the range", 
       },
       checkpoints: ordinals.map((ordinalWithinScope) => ({
         scopeId: id,
-        runId: ordinalWithinScope === 2 ? secondRunId : null,
+        runId: runIds.get(ordinalWithinScope) ?? null,
         ordinalWithinScope,
         appRunOrdinal: null,
         status: "ready" as const,
@@ -372,6 +377,8 @@ it.effect("adds a patch for each tracked repository that changed in the range", 
   const sibling = repository("shared", "/work/shared", [1, 2]);
   // Nothing before the range's end, so there is no patch to make.
   const nested = repository("ui", "/work/app/packages/ui", [2]);
+  // Turn 1 changed it, and turn 3 recorded its baseline at ordinal 2 after edits between turns.
+  const docs = repository("docs", "/work/docs", [0, 1, 2], new Map([[1, firstRunId]]));
   let threadPatchFillsBudget = false;
   const diffCheckpoints = vi.fn((input: CheckpointStore.DiffCheckpointsInput) =>
     Effect.succeed(
@@ -389,8 +396,22 @@ it.effect("adds a patch for each tracked repository that changed in the range", 
         ...projection.checkpointScopes.map((scope) => ({ ...scope, cwd: "/work/app" })),
         sibling.scope,
         nested.scope,
+        docs.scope,
       ],
-      checkpoints: [...projection.checkpoints, ...sibling.checkpoints, ...nested.checkpoints],
+      checkpoints: [
+        {
+          scopeId: firstScopeId,
+          runId: firstRunId,
+          ordinalWithinScope: 1,
+          appRunOrdinal: 1,
+          status: "ready",
+          ref: CheckpointRef.make("refs/t3/test/first"),
+        },
+        ...projection.checkpoints,
+        ...sibling.checkpoints,
+        ...nested.checkpoints,
+        ...docs.checkpoints,
+      ],
     }),
     diffCheckpoints,
   });
@@ -404,7 +425,19 @@ it.effect("adds a patch for each tracked repository that changed in the range", 
         relativePath: "../shared",
         diff: "patch of /work/shared",
       },
+      {
+        name: "docs",
+        repositoryPath: "/work/docs",
+        relativePath: "../docs",
+        diff: "patch of /work/docs",
+      },
     ]);
+    // Turn 2 left docs alone; the edits made before turn 3 are not its changes.
+    const turnTwo = yield* query.getTurnDiff({ threadId, fromTurnCount: 1, toTurnCount: 2 });
+    assert.deepEqual(
+      turnTwo.repositories?.map((repository) => repository.name),
+      ["shared"],
+    );
     // The thread's own patch leaves the folder of the repository inside it alone.
     assert.strictEqual(result.diff, "patch of /work/app");
     assert.deepEqual(
