@@ -1,4 +1,4 @@
-import { APP_ID, APP_SLUG } from "@t3tools/shared/appIdentity";
+import { APP_ID, APP_NAME, APP_SLUG } from "@t3tools/shared/appIdentity";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
@@ -105,7 +105,7 @@ export function renderBootServiceUnit(plan: BootServicePlan): string {
   // The user manager has no reliable network-online target; server networking retries itself.
   return [
     "[Unit]",
-    "Description=T3 Code server",
+    `Description=${APP_NAME} server`,
     "StartLimitIntervalSec=300",
     "StartLimitBurst=5",
     "",
@@ -231,7 +231,7 @@ export function renderBootServiceTask(
   return [
     `<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">`,
     `  <RegistrationInfo>`,
-    `    <Description>T3 Code server</Description>`,
+    `    <Description>${APP_NAME} server</Description>`,
     `  </RegistrationInfo>`,
     `  <Triggers>`,
     `    <LogonTrigger>`,

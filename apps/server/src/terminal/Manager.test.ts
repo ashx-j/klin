@@ -2162,7 +2162,7 @@ it.layer(
 
         expect(ptyAdapter.spawnInputs).toHaveLength(2);
         for (const [index, expected] of [
-          { TERM_PROGRAM: "t3code", TERM_PROGRAM_VERSION: packageJson.version },
+          { TERM_PROGRAM: "klin", TERM_PROGRAM_VERSION: packageJson.version },
           { TERM_PROGRAM: "", TERM_PROGRAM_VERSION: "custom-version" },
         ].entries()) {
           const spawnEnv = ptyAdapter.spawnInputs[index]!.env;

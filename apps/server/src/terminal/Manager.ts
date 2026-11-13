@@ -63,6 +63,7 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 
+import { APP_SLUG } from "@t3tools/shared/appIdentity";
 import packageJson from "../../package.json" with { type: "json" };
 import * as ServerConfig from "../config.ts";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
@@ -1441,7 +1442,7 @@ function createTerminalSpawnEnv(
   }
   // The server inherits its launcher's identity (e.g. Apple_Terminal); shells
   // and tools inside the integrated terminal should see T3 Code instead.
-  spawnEnv.TERM_PROGRAM = "t3code";
+  spawnEnv.TERM_PROGRAM = APP_SLUG;
   spawnEnv.TERM_PROGRAM_VERSION = packageJson.version;
   if (runtimeEnv) {
     for (const [key, value] of Object.entries(runtimeEnv)) {
