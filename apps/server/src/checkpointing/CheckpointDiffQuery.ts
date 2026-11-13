@@ -231,6 +231,8 @@ export const make = Effect.gen(function* () {
     const repositories: Array<ThreadTurnRepositoryDiff> = [];
     let remainingBytes = input.maxBytes;
     for (const { scope, comparison } of changed.flat()) {
+      // Too little is left for even a truncated patch's marker.
+      if (remainingBytes < Buffer.byteLength(DIFF_TRUNCATED_MARKER)) break;
       const diff = yield* patchBetween(comparison, remainingBytes).pipe(
         Effect.catch((cause) =>
           Effect.logWarning("checkpoint repository diff unavailable", {

@@ -372,8 +372,15 @@ it.effect("adds a patch for each tracked repository that changed in the range", 
   const sibling = repository("shared", "/work/shared", [1, 2]);
   // Nothing before the range's end, so there is no patch to make.
   const nested = repository("ui", "/work/app/packages/ui", [2]);
+  let threadPatchFillsBudget = false;
   const diffCheckpoints = vi.fn((input: CheckpointStore.DiffCheckpointsInput) =>
-    Effect.succeed(input.format === "numstat" ? "1\t0\tfile.ts\0" : `patch of ${input.cwd}`),
+    Effect.succeed(
+      input.format === "numstat"
+        ? "1\t0\tfile.ts\0"
+        : threadPatchFillsBudget && input.cwd === "/work/app"
+          ? "x".repeat(input.maxOutputBytes ?? 0)
+          : `patch of ${input.cwd}`,
+    ),
   );
   const layer = layerFor({
     projection: Effect.succeed({
@@ -404,5 +411,11 @@ it.effect("adds a patch for each tracked repository that changed in the range", 
       diffCheckpoints.mock.calls.find(([input]) => input.cwd === "/work/app")?.[0].excludePaths,
       ["packages/ui"],
     );
+
+    // A thread patch that uses the whole budget leaves no room for a repository's.
+    threadPatchFillsBudget = true;
+    const full = yield* query.getTurnDiff({ threadId, fromTurnCount: 0, toTurnCount: 2 });
+    assert.strictEqual(Buffer.byteLength(full.diff), 10_000_000);
+    assert.deepEqual(full.repositories, []);
   }).pipe(Effect.provide(layer));
 });
