@@ -214,6 +214,7 @@ it.effect(
       const calls = yield* Ref.make<ReadonlyArray<string>>([]);
       const record = (call: string) => Ref.update(calls, (current) => [...current, call]);
       const slow = yield* Ref.make(true);
+      const summaryFails = yield* Ref.make(false);
       const slowStarted = yield* Deferred.make<void>();
       const othersSeen = yield* Deferred.make<void>();
       const layerTest = CheckpointService.layer.pipe(
@@ -260,7 +261,20 @@ it.effect(
                     Ref.update(refs, (current) => new Set([...current, checkpointRef])),
                   ),
                 ),
-              diffCheckpoints: () => Effect.succeed("1\t0\tfile.ts\0"),
+              diffCheckpoints: ({ cwd }) =>
+                Effect.flatMap(Ref.get(summaryFails), (fails) =>
+                  fails
+                    ? Effect.fail(
+                        new VcsProcessExitError({
+                          operation: "test.diff",
+                          command: "git",
+                          cwd,
+                          exitCode: 1,
+                          detail: "output too large",
+                        }),
+                      )
+                    : Effect.succeed("1\t0\tfile.ts\0"),
+                ),
               listAuthoredPaths: () => Effect.succeed(null),
             }),
           ),
@@ -334,6 +348,18 @@ it.effect(
         assert.lengthOf(
           (yield* Ref.get(calls)).filter((call) => call.startsWith("status")),
           repositories.length,
+        );
+
+        // A changed file list Git could not give is not proof that nothing changed.
+        yield* Ref.set(summaryFails, true);
+        yield* Ref.set(heads, new Map([[changedRepository, "c".repeat(40)]]));
+        assert.deepEqual(
+          (yield* captureAll(3)).flatMap(Option.toArray).map(({ checkpoint }) => ({
+            scopeId: checkpoint.scopeId,
+            status: checkpoint.status,
+            files: checkpoint.files,
+          })),
+          [{ scopeId: recorded[0]!.checkpoint.scopeId, status: "ready", files: [] }],
         );
       }).pipe(Effect.provide(layerTest));
     }),

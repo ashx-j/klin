@@ -537,7 +537,8 @@ export const layer: Layer.Layer<
           ),
         );
 
-    const capture = (
+    // `summaryFailed`: Git could not list the changed files, so an empty list proves nothing.
+    const captureSnapshot = (
       input: Parameters<CheckpointServiceV2Shape["capture"]>[0] & {
         /** The commit a clean folder matches, which then needs no staging to snapshot. */
         readonly cleanHead?: string;
@@ -569,7 +570,7 @@ export const layer: Layer.Layer<
           const repository =
             input.forceMissing === true ? "missing" : yield* probeRepository(input.scope);
           if (repository !== "repository") {
-            return makeCheckpoint({
+            const checkpoint = makeCheckpoint({
               id: checkpointId,
               scope: input.scope,
               runId: input.runId,
@@ -582,6 +583,7 @@ export const layer: Layer.Layer<
               files: [],
               capturedAt: input.capturedAt,
             });
+            return { checkpoint, summaryFailed: false };
           }
 
           const captureStatus = yield* (
@@ -611,7 +613,7 @@ export const layer: Layer.Layer<
           );
 
           if (captureStatus !== "ready") {
-            return makeCheckpoint({
+            const checkpoint = makeCheckpoint({
               id: checkpointId,
               scope: input.scope,
               runId: input.runId,
@@ -624,6 +626,7 @@ export const layer: Layer.Layer<
               files: [],
               capturedAt: input.capturedAt,
             });
+            return { checkpoint, summaryFailed: false };
           }
 
           const previousExists = yield* checkpointStore
@@ -681,12 +684,12 @@ export const layer: Layer.Layer<
                     scopeId: input.scope.id,
                     checkpointRef,
                     cause: String(cause),
-                  }).pipe(Effect.as([])),
+                  }).pipe(Effect.as(null)),
                 ),
               )
             : [];
 
-          return makeCheckpoint({
+          const checkpoint = makeCheckpoint({
             id: checkpointId,
             scope: input.scope,
             runId: input.runId,
@@ -696,9 +699,10 @@ export const layer: Layer.Layer<
             appRunOrdinal: input.appRunOrdinal,
             ref: checkpointRef,
             status: "ready",
-            files,
+            files: files ?? [],
             capturedAt: input.capturedAt,
           });
+          return { checkpoint, summaryFailed: files === null };
         }),
       ).pipe(
         Effect.mapError(
@@ -939,7 +943,7 @@ export const layer: Layer.Layer<
             nodeId: input.nodeId,
             capturedAt: input.baselineCapturedAt,
           });
-      const checkpoint = yield* capture({
+      const { checkpoint, summaryFailed } = yield* captureSnapshot({
         scope: input.scope,
         runId: input.runId,
         nodeId: input.nodeId,
@@ -955,7 +959,9 @@ export const layer: Layer.Layer<
       }
       yield* noteRepositoryState(id, settled);
       // A pull or a commit of what was already there moves the snapshot and lists no file.
-      return checkpoint.files.length === 0 && (baseline === null || baseline.status === "ready")
+      return checkpoint.files.length === 0 &&
+        !summaryFailed &&
+        (baseline === null || baseline.status === "ready")
         ? Option.none()
         : Option.some({ baseline, checkpoint });
     });
@@ -1054,7 +1060,8 @@ export const layer: Layer.Layer<
       nestedScopePaths: resolveNestedScopePaths,
       captureBaseline,
       materializeBaselineCheckpoint,
-      capture,
+      capture: (input) =>
+        captureSnapshot(input).pipe(Effect.map((snapshot) => snapshot.checkpoint)),
       captureRepository,
       restore,
       deleteStaleRefs,
