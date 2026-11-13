@@ -1,7 +1,12 @@
 import { EnvironmentId, type PluginFleetEntry, PluginId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { type FleetMachine, planFleetSync } from "./pluginFleetPlan";
+import {
+  type FleetAttempt,
+  type FleetMachine,
+  planFleetSync,
+  settleFleetAttempts,
+} from "./pluginFleetPlan";
 
 const notes = PluginId.make("notes");
 const entry = (overrides: Partial<PluginFleetEntry> = {}): PluginFleetEntry => ({
@@ -77,5 +82,18 @@ describe("planFleetSync", () => {
 
   it("does nothing until two machines share", () => {
     expect(planFleetSync([sharing("pc", [entry()]), away("homeserver", "offline")])).toEqual([]);
+  });
+});
+
+describe("settleFleetAttempts", () => {
+  it("forgets actions that left the plan and never schedules a time already past", () => {
+    const attempts = new Map<string, FleetAttempt>([
+      ["copied", { tries: 0, retryAt: 900 }],
+      ["failed", { tries: 1, retryAt: 1_300 }],
+      ["due", { tries: 2, retryAt: 1_000 }],
+    ]);
+    expect(settleFleetAttempts(attempts, new Set(["failed", "due"]), 1_000)).toBe(1_300);
+    expect([...attempts.keys()]).toEqual(["failed", "due"]);
+    expect(settleFleetAttempts(attempts, new Set(["due"]), 1_000)).toBeUndefined();
   });
 });

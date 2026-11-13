@@ -56,9 +56,10 @@ run. Its themes, styles and web part still work from that machine. A machine who
 old for a plugin doesn't get it until it is updated. A plugin folder over 1,000 files or 25 MB isn't
 copied, and its row says so.
 
-A plugin arrives turned off on a machine that didn't have it. Turning it on or off anywhere then
-does the same everywhere, so turning it on is where you approve running its code on all your
-machines. How plugins were switched before sharing began stays on each machine until you flip them.
+A new plugin is off everywhere until you turn it on. Turning it on or off on any machine does the
+same on all of them, including machines that get the plugin later, which then run it without asking
+again. So turning a plugin on is where you approve running its code on all your machines. How
+plugins were switched before sharing began stays on each machine until you flip them.
 
 To take a plugin off one machine only, choose **Remove** on its row there and then **Remove here
 only**. Your other machines keep it, and its row on them shows the machine as kept off, with **Add
@@ -121,8 +122,9 @@ thread. Tools that change things work only in a thread set to **Full access** an
 
 Installed plugins are in the `plugins` folder of the environment's T3 Code data directory, one
 folder per plugin. Their settings and files are in `plugin-data`, and `plugins.json` records which
-ones are enabled and the newest change to each that this machine shares with your others. T3 Code reads a plugin's settings file once, so an edit you make to it by hand shows after
-T3 Code restarts.
+ones are enabled and the newest change to each that this machine shares with your others. T3 Code
+reads a plugin's settings file once, so an edit you make to it by hand shows after T3 Code
+restarts.
 
 Plugin UI, styles and themes load in the web and desktop apps. They load from the app's main
 environment, which is the desktop app's own server or the server the web app was opened from, and

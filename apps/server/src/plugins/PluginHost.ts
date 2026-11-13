@@ -672,10 +672,14 @@ const make = Effect.gen(function* () {
   );
 
   /** `restart` also restarts that plugin with fresh code. */
-  const rediscover = Effect.fn("PluginHost.rediscover")(function* (restart: PluginId | undefined) {
+  /** `shareLinked` records a linked `restart` for other machines, as the user's own Reload does. */
+  const rediscover = Effect.fn("PluginHost.rediscover")(function* (
+    restart: PluginId | undefined,
+    shareLinked = false,
+  ) {
     // Reloading a plugin that stopped the server clears that failure; it stays off until turned on.
     if (restart !== undefined) yield* pluginsConfig.clearCrash(restart);
-    const { plugins, found } = yield* discover(false, restart);
+    const { plugins, found } = yield* discover(false, shareLinked ? restart : undefined);
     if (restart !== undefined) yield* stopPlugin(restart);
     const known = yield* Ref.get(records);
     const next = plugins.map((plugin) => ({
@@ -718,21 +722,23 @@ const make = Effect.gen(function* () {
     return plugins;
   });
 
-  const reload: PluginHost["Service"]["reload"] = Effect.fn("PluginHost.reload")(
-    function* (pluginId) {
-      yield* runLifecycle(
-        rediscover(pluginId).pipe(
-          Effect.flatMap((plugins) =>
-            plugins.some((plugin) => plugin.id === pluginId)
-              ? Effect.void
-              : Effect.fail(new PluginNotFoundError({ pluginId })),
-          ),
+  const restartPlugin = Effect.fn("PluginHost.restart")(function* (
+    pluginId: PluginId,
+    shareLinked: boolean,
+  ) {
+    yield* runLifecycle(
+      rediscover(pluginId, shareLinked).pipe(
+        Effect.flatMap((plugins) =>
+          plugins.some((plugin) => plugin.id === pluginId)
+            ? Effect.void
+            : Effect.fail(new PluginNotFoundError({ pluginId })),
         ),
-      );
-      yield* awaitActivation(pluginId);
-      return yield* stateOf(pluginId);
-    },
-  );
+      ),
+    );
+    yield* awaitActivation(pluginId);
+    return yield* stateOf(pluginId);
+  });
+  const reload: PluginHost["Service"]["reload"] = (pluginId) => restartPlugin(pluginId, true);
 
   const rescan = Effect.fn("PluginHost.rescan")(function* () {
     // The docs tell people to copy plugin folders here, so it has to exist.
@@ -780,6 +786,7 @@ const make = Effect.gen(function* () {
     stateOf,
     rescan: rediscover(undefined).pipe(Effect.asVoid),
     reload,
+    restart: (pluginId) => restartPlugin(pluginId, false),
     config: pluginsConfig.current,
     writeConfig: pluginsConfig.write,
   });

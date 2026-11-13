@@ -141,14 +141,14 @@ activate(api) {
     const saved = await api.storage.get("cursor");
     for await (const batch of api.events.stored({ afterSequence: typeof saved === "number" ? saved : 0 })) {
       for (const event of batch.events) handle(event.type, JSON.parse(event.payloadJson));
-      const last = batch.events.at(-1);
-      if (last !== undefined) await api.storage.set("cursor", last.sequence);
+      await api.storage.set("cursor", batch.resumeAfter);
     }
   })().catch((error) => api.log.error("event loop stopped", { error: String(error) }));
 }
 ```
 
-- Save the last sequence you handled and pass it after a restart. Without `afterSequence` the feed
+- Save each batch's `resumeAfter` once you handled it and pass it after a restart. It can be
+  past the last event, when the feed skipped rows `types` left out. Without `afterSequence` the feed
   starts with the next event stored. `types` keeps only some event types, and `batchSize` sets at
   most how many events a batch has, from 1 to 500. A batch also stops at about 4 MB.
 - Each event's payload and metadata are JSON text in T3's own format, which changes between

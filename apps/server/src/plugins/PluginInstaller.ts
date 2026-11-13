@@ -120,6 +120,13 @@ export interface PluginInstallerHost {
   readonly rescan: Effect.Effect<void, PluginConfigError>;
   /** What clients see of a plugin now. */
   readonly stateOf: (pluginId: PluginId) => Effect.Effect<PluginState, PluginNotFoundError>;
+  /**
+   * Restarts the plugin with its current files, waiting until it has started. A linked folder is
+   * not recorded for other machines, so a restart the user didn't ask for never shares its edits.
+   */
+  readonly restart: (
+    pluginId: PluginId,
+  ) => Effect.Effect<PluginState, PluginNotFoundError | PluginConfigError>;
   /** Rescans the plugin folders and restarts the plugin, waiting until it has started. */
   readonly reload: (
     pluginId: PluginId,
@@ -346,7 +353,7 @@ export const make = Effect.fn("PluginInstaller.make")(function* (host: PluginIns
       .pipe(
         // Whatever failed after the stop, the plugin folder holds one version; start it again.
         Effect.onError(() =>
-          stopped ? host.reload(manifest.id).pipe(Effect.ignore) : Effect.void,
+          stopped ? host.restart(manifest.id).pipe(Effect.ignore) : Effect.void,
         ),
       );
     if (swapped.skipped) {
@@ -354,7 +361,7 @@ export const make = Effect.fn("PluginInstaller.make")(function* (host: PluginIns
       if (fleet !== undefined) yield* applyFleet(fleet);
       return yield* host.stateOf(manifest.id);
     }
-    const started = yield* host.reload(manifest.id);
+    const started = yield* host.restart(manifest.id);
     // A copy keeps a version that fails to start, as every other machine has it.
     if (!swapped.hadPrevious || started.status !== "failed" || fleet !== undefined) return started;
     yield* host
@@ -376,7 +383,7 @@ export const make = Effect.fn("PluginInstaller.make")(function* (host: PluginIns
           );
         }),
       )
-      .pipe(Effect.ensuring(host.reload(manifest.id).pipe(Effect.ignore)));
+      .pipe(Effect.ensuring(host.restart(manifest.id).pipe(Effect.ignore)));
     return yield* new PluginInstallError({
       reason: `${manifest.name} ${manifest.version} failed to start, so ${swapped.replacedVersion ?? "the previous version"} is back. It failed with: ${started.failure?.message ?? "an unknown error"}`,
     });
@@ -438,6 +445,17 @@ export const make = Effect.fn("PluginInstaller.make")(function* (host: PluginIns
       const manifest = yield* readSourceManifest(folder);
       const reason = refusal(manifest);
       if (reason !== undefined) return yield* new PluginInstallError({ reason });
+      const realOf = (location: string) =>
+        fs.realPath(location).pipe(Effect.orElseSucceed(() => location));
+      const overlap = (a: string, b: string) =>
+        a === b || a.startsWith(`${b}${path.sep}`) || b.startsWith(`${a}${path.sep}`);
+      const linked = yield* realOf(folder);
+      // Replacing an installed copy deletes its folder, which must never be the one being linked.
+      if (overlap(linked, yield* realOf(pluginsDir))) {
+        return yield* new PluginInstallError({
+          reason: "Link a folder outside the plugins folder. Folders in it are already installed.",
+        });
+      }
       yield* host.lifecycle(
         Effect.gen(function* () {
           const existing = (yield* host.plugins).find((plugin) => plugin.id === manifest.id);
@@ -448,6 +466,11 @@ export const make = Effect.fn("PluginInstaller.make")(function* (host: PluginIns
           }
           if (existing !== undefined && isDuplicate(existing)) {
             return yield* new PluginInstallError({ reason: existing.failure.message });
+          }
+          if (existing !== undefined && overlap(linked, existing.rootDir)) {
+            return yield* new PluginInstallError({
+              reason: `${folder} holds the installed copy of ${manifest.id}, so it can't be linked.`,
+            });
           }
           // Linking replaces an installed copy and keeps its switch, settings and data, so moving
           // to a development folder never removes the plugin from the user's other machines.
@@ -536,7 +559,9 @@ export const make = Effect.fn("PluginInstaller.make")(function* (host: PluginIns
         )
         .pipe(
           // As for an install: whatever failed after the stop, what is left starts again if on.
-          Effect.onError(() => (stopped ? host.reload(pluginId).pipe(Effect.ignore) : Effect.void)),
+          Effect.onError(() =>
+            stopped ? host.restart(pluginId).pipe(Effect.ignore) : Effect.void,
+          ),
         );
     },
   );
@@ -607,10 +632,10 @@ export const make = Effect.fn("PluginInstaller.make")(function* (host: PluginIns
         }),
       )
       .pipe(
-        Effect.onError(() => (stopped ? host.reload(pluginId).pipe(Effect.ignore) : Effect.void)),
+        Effect.onError(() => (stopped ? host.restart(pluginId).pipe(Effect.ignore) : Effect.void)),
       );
     // Starts or stops it as plugins.json now says.
-    if (outcome === "switched") yield* host.reload(pluginId);
+    if (outcome === "switched") yield* host.restart(pluginId);
     return { applied: outcome !== "unchanged" };
   });
 
@@ -638,6 +663,9 @@ export const make = Effect.fn("PluginInstaller.make")(function* (host: PluginIns
       .lifecycle(
         Effect.gen(function* () {
           const plugin = (yield* host.plugins).find((candidate) => candidate.id === pluginId);
+          if (keptOff && plugin !== undefined && isDuplicate(plugin)) {
+            return yield* new PluginInstallError({ reason: plugin.failure.message });
+          }
           // Its entry goes too, so this machine neither carries the plugin nor its removal.
           yield* host.writeConfig((current) => {
             const others = (current.fleet?.keptOff ?? []).filter((id) => id !== pluginId);
@@ -661,7 +689,7 @@ export const make = Effect.fn("PluginInstaller.make")(function* (host: PluginIns
         }),
       )
       .pipe(
-        Effect.onError(() => (stopped ? host.reload(pluginId).pipe(Effect.ignore) : Effect.void)),
+        Effect.onError(() => (stopped ? host.restart(pluginId).pipe(Effect.ignore) : Effect.void)),
       );
   });
 

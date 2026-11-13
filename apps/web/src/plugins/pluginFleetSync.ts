@@ -5,7 +5,13 @@ import { appAtomRegistry } from "../rpc/atomRegistry";
 import { pluginEnvironment } from "../state/plugins";
 import { fleetMachinesAtom, fleetProblemsAtom } from "./pluginFleet";
 import { copyPlugin } from "./pluginFiles";
-import { type FleetAction, fleetActionKey, planFleetSync } from "./pluginFleetPlan";
+import {
+  type FleetAction,
+  type FleetAttempt,
+  fleetActionKey,
+  planFleetSync,
+  settleFleetAttempts,
+} from "./pluginFleetPlan";
 
 // How long a failed action waits before its next try, by the number of tries so far.
 const RETRY_DELAYS_MS = [30_000, 2 * 60_000, 10 * 60_000, 30 * 60_000];
@@ -55,16 +61,19 @@ export function startPluginFleetSync(): () => void {
   let running = false;
   let again = false;
   // Actions in flight or failed, by key, with when each may run next.
-  const attempts = new Map<string, { readonly tries: number; readonly retryAt: number }>();
+  const attempts = new Map<string, FleetAttempt>();
   const sharingBefore = new Set<EnvironmentId>();
   let retryTimer: ReturnType<typeof setTimeout> | undefined;
 
   const scheduleRetry = () => {
     if (retryTimer !== undefined) clearTimeout(retryTimer);
     retryTimer = undefined;
-    const next = Math.min(...[...attempts.values()].map((attempt) => attempt.retryAt));
-    if (!Number.isFinite(next)) return;
-    retryTimer = setTimeout(() => void run(), Math.max(0, next - Date.now()));
+    const planned = new Set(
+      planFleetSync(appAtomRegistry.get(fleetMachinesAtom)).map(fleetActionKey),
+    );
+    const now = Date.now();
+    const next = settleFleetAttempts(attempts, planned, now);
+    if (next !== undefined) retryTimer = setTimeout(() => void run(), next - now);
   };
 
   const run = async () => {

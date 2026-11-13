@@ -49,6 +49,7 @@ const harness = Effect.fn(function* () {
     stateOf: (pluginId) => Effect.fail(new PluginNotFoundError({ pluginId })),
     rescan: Effect.void,
     reload: (pluginId) => Effect.fail(new PluginNotFoundError({ pluginId })),
+    restart: (pluginId) => Effect.fail(new PluginNotFoundError({ pluginId })),
     config: Effect.succeed({}),
     writeConfig: () => Effect.void,
   };

@@ -92,6 +92,31 @@ export function planFleetSync(machines: ReadonlyArray<FleetMachine>): ReadonlyAr
   return actions;
 }
 
+/** One action the sync loop tried, and when it may run again. */
+export interface FleetAttempt {
+  readonly tries: number;
+  readonly retryAt: number;
+}
+
+/**
+ * Forgets the attempts of actions the plan no longer holds, and returns when the next retry is
+ * due. Only a time still ahead counts, so a timer set from it never fires again at once.
+ */
+export const settleFleetAttempts = (
+  attempts: Map<string, FleetAttempt>,
+  planned: ReadonlySet<string>,
+  now: number,
+): number | undefined => {
+  let next: number | undefined;
+  for (const [key, { retryAt }] of attempts) {
+    if (!planned.has(key)) attempts.delete(key);
+    else if (retryAt > now && Number.isFinite(retryAt) && (next === undefined || retryAt < next)) {
+      next = retryAt;
+    }
+  }
+  return next;
+};
+
 export type FleetPlacement =
   | { readonly kind: "here"; readonly plugin: PluginState | undefined }
   | { readonly kind: "pending"; readonly problem: string | undefined }

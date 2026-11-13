@@ -161,12 +161,26 @@ export const makeFacadeContext = (input: {
           const close = () =>
             pluginCodeScope.exit(() => iterator.return?.() ?? Promise.resolve(DONE));
           const closeOnStop = () => void close().catch(() => undefined);
+          const detach = () => stopped.removeEventListener("abort", closeOnStop);
           if (stopped.aborted) closeOnStop();
           else stopped.addEventListener("abort", closeOnStop, { once: true });
           return {
-            next: () => call(Effect.promise(() => iterator.next())),
+            // A stream that ended or failed is closed already, and a retry would add a listener.
+            next: () =>
+              call(
+                Effect.promise(async () => {
+                  try {
+                    const result = await iterator.next();
+                    if (result.done === true) detach();
+                    return result;
+                  } catch (error) {
+                    detach();
+                    throw error;
+                  }
+                }),
+              ),
             return: () => {
-              stopped.removeEventListener("abort", closeOnStop);
+              detach();
               return call(Effect.promise(close));
             },
           };

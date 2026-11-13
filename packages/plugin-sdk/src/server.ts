@@ -83,9 +83,9 @@ export interface PluginStoredEvent {
   readonly occurredAt: string;
   readonly commandId: string | null;
   /**
-   * The payload as JSON text. Tool output in it is what the agent saw: Claude Code cuts most tool
-   * output at about 30,000 characters before the agent reads it, and T3 cuts a file change's diff
-   * at 32 KB.
+   * The payload as JSON text. Tool output in it is what the provider reported: Claude Code cuts
+   * most tool output at about 30,000 characters before the agent reads it, other providers' output
+   * is stored as they report it, and T3 cuts a file change's diff at 32 KB.
    */
   readonly payloadJson: string;
   /** The metadata as JSON text, such as the run, the provider and the node. */
@@ -95,6 +95,12 @@ export interface PluginStoredEvent {
 export interface PluginStoredEventBatch {
   /** The next stored events in sequence order. Empty only when `missed` is set. */
   readonly events: ReadonlyArray<PluginStoredEvent>;
+  /**
+   * The `afterSequence` that continues right after this batch. Save it rather than the last
+   * event's sequence: it also passes rows `types` left out, and it never skips events still stored
+   * inside a `missed` range.
+   */
+  readonly resumeAfter: number;
   /**
    * Set when T3 may have deleted events after `afterSequence`, through `throughSequence`, before
    * the feed read them. T3 keeps a stored event for about a day once its threads show it, and
@@ -178,8 +184,8 @@ export interface PluginApi<Rpc extends PluginRpcMap = PluginRpcMap> {
     /**
      * Yields stored events after `afterSequence` in batches, then new ones as they are stored,
      * until `signal` aborts, the loop stops or the plugin deactivates. It reads a batch only when
-     * the loop asks, so a slow plugin falls behind without holding up T3. Save the last sequence
-     * you handled and pass it after a restart.
+     * the loop asks, so a slow plugin falls behind without holding up T3. Save each batch's
+     * `resumeAfter` once you handled it and pass it after a restart.
      */
     readonly stored: (options?: {
       /** Starts after this sequence. Without it, the feed starts with the next event stored. */

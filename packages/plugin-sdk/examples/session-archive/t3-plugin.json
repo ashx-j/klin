@@ -29,9 +29,9 @@
     "additionalProperties": false
   },
   "permissions": [
-    "Reads every orchestration event this machine stores: prompts, replies, reasoning, tool calls and subagents.",
-    "On the hub, writes those events to the archive file set in Archive file.",
-    "On the hub, listens on the port in Hub address: only at its host when that is an IP address, otherwise on every network interface.",
-    "On other machines, sends their events to the hub at Hub address."
+    "Reads every orchestration event this machine stores: prompts, replies, reasoning, tool calls and subagents",
+    "On the hub, writes those events to the archive file set in Archive file",
+    "On the hub, listens on the port in Hub address: only at its host when that is an IP address, otherwise on every network interface",
+    "On other machines, sends their events to the hub at Hub address"
   ]
 }

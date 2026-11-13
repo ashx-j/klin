@@ -66,7 +66,7 @@ describe("session archive", () => {
   it("stores each event once when the same batch is replayed", () => {
     using dir = tempDir();
     using db = Archive.openDatabase(NodePath.join(dir.path, "archive.sqlite"));
-    const batch = { events: [event(1), event(2)] };
+    const batch = { events: [event(1), event(2)], resumeAfter: 2 };
 
     expect(Archive.storeFeedBatch(db, laptop, batch)).toBe(2);
     expect(Archive.storeFeedBatch(db, laptop, batch)).toBe(0);
@@ -76,18 +76,23 @@ describe("session archive", () => {
   it("commits the cursor together with its rows", () => {
     using dir = tempDir();
     using db = Archive.openDatabase(NodePath.join(dir.path, "archive.sqlite"));
-    Archive.storeFeedBatch(db, laptop, { events: [event(1), event(2)] });
+    Archive.storeFeedBatch(db, laptop, { events: [event(1), event(2)], resumeAfter: 2 });
     expect(Archive.readCursor(db, laptop.id)).toBe(2);
 
-    const broken = { events: [event(3), { ...event(4), payloadJson: null }] };
+    const broken = { events: [event(3), { ...event(4), payloadJson: null }], resumeAfter: 4 };
     // @ts-expect-error The NOT NULL column refuses the null payload, which fails the whole batch.
     expect(() => Archive.storeFeedBatch(db, laptop, broken)).toThrow("NOT NULL");
     expect(Archive.readCursor(db, laptop.id)).toBe(2);
     expect(Archive.countEvents(db)).toBe(2);
 
-    const onlyMissed = { events: [], missed: { afterSequence: 2, throughSequence: 9 } };
+    // Kept events can still follow inside a gap, so it resumes where the feed says, not past it.
+    const onlyMissed = {
+      events: [],
+      missed: { afterSequence: 2, throughSequence: 9 },
+      resumeAfter: 5,
+    };
     Archive.storeFeedBatch(db, laptop, onlyMissed);
-    expect(Archive.readCursor(db, laptop.id)).toBe(9);
+    expect(Archive.readCursor(db, laptop.id)).toBe(5);
     expect(gapsIn(db)).toEqual([{ machine: laptop.id, after_sequence: 2, through_sequence: 9 }]);
   });
 
@@ -126,10 +131,11 @@ describe("session archive", () => {
     await using archive = openWorker(archiveFile);
     await using outbox = openWorker(NodePath.join(dir.path, "outbox", "outbox.sqlite"));
     await using hub = await serveIngest(archive);
-    await outbox.run("storeFeedBatch", laptop, { events: [event(1), event(2)] });
+    await outbox.run("storeFeedBatch", laptop, { events: [event(1), event(2)], resumeAfter: 2 });
     await outbox.run("storeFeedBatch", laptop, {
       events: [event(5)],
       missed: { afterSequence: 2, throughSequence: 4 },
+      resumeAfter: 5,
     });
     const send = (key: string) =>
       Archive.sendOutbox({
@@ -160,10 +166,11 @@ describe("session archive", () => {
     const outboxFile = NodePath.join(dir.path, "outbox.sqlite");
     {
       using outbox = Archive.openDatabase(outboxFile);
-      Archive.storeFeedBatch(outbox, laptop, { events: [event(1), event(2)] });
+      Archive.storeFeedBatch(outbox, laptop, { events: [event(1), event(2)], resumeAfter: 2 });
       Archive.storeFeedBatch(outbox, laptop, {
         events: [event(5)],
         missed: { afterSequence: 2, throughSequence: 4 },
+        resumeAfter: 5,
       });
     }
     using archive = Archive.openDatabase(NodePath.join(dir.path, "archive.sqlite"));
@@ -205,7 +212,7 @@ describe("session archive", () => {
       events: {
         stored: async function* (options) {
           expect(options?.afterSequence).toBe(0);
-          yield { events: [event(1), event(2)] };
+          yield { events: [event(1), event(2)], resumeAfter: 2 };
           fed();
           await new Promise((resolve) => options?.signal?.addEventListener("abort", resolve));
         },

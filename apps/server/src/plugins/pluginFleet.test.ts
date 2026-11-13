@@ -245,4 +245,49 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("plugin sharing",
       }).pipe(Effect.provide(layerHost()));
     }).pipe(Effect.provide(layerConfig())),
   );
+
+  it("refuses to link the installed copy's own folder, which replacing it would delete", () =>
+    Effect.gen(function* () {
+      yield* installHello;
+      const fs = yield* FileSystem.FileSystem;
+      const { stateDir } = yield* ServerConfig.ServerConfig;
+      const installedFolder = `${stateDir}/plugins/hello-plugin`;
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        const installer = yield* PluginInstaller.PluginInstaller;
+        yield* waitForStatuses(host, { "hello-plugin": "disabled" });
+        const refused = yield* installer.link(installedFolder).pipe(Effect.flip);
+        assert.strictEqual(refused._tag, "PluginInstallError");
+        assert.isTrue(yield* fs.exists(`${installedFolder}/server.cjs`));
+      }).pipe(Effect.provide(layerHost()));
+    }).pipe(Effect.provide(layerConfig())));
+
+  it("shares a linked folder's edits on the user's Reload, not on a switch from elsewhere", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { stateDir } = yield* ServerConfig.ServerConfig;
+      const folder = `${stateDir}/checkout/hello-plugin`;
+      yield* writeFile(
+        `${folder}/t3-plugin.json`,
+        yield* fs.readFileString(`${fixturesDir}hello-plugin/t3-plugin.json`),
+      );
+      yield* writeFile(`${folder}/server.cjs`, "module.exports = { activate() {} };");
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        const installer = yield* PluginInstaller.PluginInstaller;
+        yield* installer.link(folder);
+        const linked = (yield* fleetEntries(host)).get(hello);
+        if (linked === undefined) return assert.fail("the linked plugin is not shared");
+
+        // An agent is halfway through an edit when another machine turns the plugin on.
+        yield* writeFile(`${folder}/server.cjs`, "module.exports = { activate() { /* wip */ } };");
+        const turnedOn = { ...linked, enabled: true, enabledAt: linked.enabledAt + 10 };
+        assert.isTrue((yield* installer.applyFleet(turnedOn)).applied);
+        yield* waitForStatuses(host, { "hello-plugin": "active" });
+        assert.strictEqual((yield* fleetEntries(host)).get(hello)?.revision, linked.revision);
+
+        yield* host.reload(hello);
+        assert.notStrictEqual((yield* fleetEntries(host)).get(hello)?.revision, linked.revision);
+      }).pipe(Effect.provide(layerHost()));
+    }).pipe(Effect.provide(layerConfig())));
 });

@@ -135,7 +135,9 @@ layer("plugin event feed", (it) => {
       const waiting = yield* Effect.forkChild(feed.batch);
       yield* append("skipped-3");
       const deleted = yield* append("filtered-deleted", "project.deleted");
-      assert.deepStrictEqual(sequencesOf(yield* Fiber.join(waiting)), [deleted]);
+      const batch = yield* Fiber.join(waiting);
+      assert.deepStrictEqual(sequencesOf(batch), [deleted]);
+      assert.isAtLeast(batch.resumeAfter, deleted);
       // The first read covered everything up to the head, so no later read starts below it.
       assert.strictEqual(readsFrom[0], after);
       assert.isTrue(readsFrom.slice(1).every((from) => from >= headBefore));
@@ -160,6 +162,7 @@ layer("plugin event feed", (it) => {
       const first = yield* feed.batch;
       assert.deepStrictEqual(sequencesOf(first), [kept]);
       assert.deepStrictEqual(first.missed, { afterSequence: after, throughSequence: kept });
+      assert.strictEqual(first.resumeAfter, kept);
       const later = yield* append("later");
       const second = yield* feed.batch;
       assert.deepStrictEqual(sequencesOf(second), [later]);

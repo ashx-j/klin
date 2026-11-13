@@ -211,8 +211,9 @@ stays, unlike a manual update that rolls back, because the other machines have t
 rollback would only diverge. A plugin kept off a machine has no entry there and is skipped by the
 planner, so that machine neither gets it nor spreads its removal.
 
-The trust step moves with it: a plugin still arrives off, and turning it on is a decision for every
-machine. But anything that can write one machine's `plugins/` folder, a linked folder it can then
+The trust step moves with it: a new plugin is still off until turned on, and turning it on is a
+decision for every machine, including ones that get the plugin later and then run it at once. But
+anything that can write one machine's `plugins/` folder, a linked folder it can then
 reload, or `plugins.json` can get code onto the others once a client connects to both. Plugins are
 trusted code and an agent with full access on a machine can already run anything there, so this is
 accepted for a single owner's machines; **Remove here only** and the per-machine **Share plugins**

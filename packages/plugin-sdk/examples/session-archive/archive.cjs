@@ -156,18 +156,14 @@ const storeUpload = (db, upload, cursor = 0) =>
   });
 
 /**
- * Stores one batch from `api.events.stored` with the cursor to resume after. A batch that is only
- * `missed` means nothing is stored after the cursor, so the cursor moves past the gap. Otherwise
- * it stops at the last event, since kept events inside a reported gap can fill more batches.
+ * Stores one batch from `api.events.stored` with the feed's own position to resume after, so a
+ * restart never skips events still stored inside a reported gap.
  * @type {(db: Database, machine: Machine, batch: import("@t3tools/plugin-sdk/server").PluginStoredEventBatch) => number}
  */
 const storeFeedBatch = (db, machine, batch) =>
   inTransaction(db, () => {
-    const cursor =
-      batch.events.at(-1)?.sequence ??
-      Math.max(readCursor(db, machine.id), batch.missed?.throughSequence ?? 0);
     const missed = batch.missed === undefined ? [] : [batch.missed];
-    return storeUpload(db, { machine, events: batch.events, missed }, cursor);
+    return storeUpload(db, { machine, events: batch.events, missed }, batch.resumeAfter);
   });
 
 /**

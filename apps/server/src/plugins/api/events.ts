@@ -118,7 +118,9 @@ export const makeEventsApi = (
                 : (events.at(-1)?.sequence ?? cursor);
             if (events.length > 0 || missed !== undefined) {
               const batch: PluginStoredEventBatch =
-                missed === undefined ? { events } : { events, missed };
+                missed === undefined
+                  ? { events, resumeAfter: cursor }
+                  : { events, resumeAfter: cursor, missed };
               return batch;
             }
             if (cursor < head) continue;
