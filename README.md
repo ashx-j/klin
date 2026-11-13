@@ -2,7 +2,7 @@
 
 Klin is a personal fork of [T3 Code](https://github.com/pingdotgg/t3code), a desktop and web app for running coding agents on your machine. It works with your existing Claude Code, Codex, Cursor, Grok Build, OpenCode, Antigravity and fx subscriptions.
 
-Klin follows T3 Code's releases and adds features that upstream doesn't ship. It has no mobile app.
+Klin merges T3 Code's release and nightly tags, never arbitrary upstream `main`, and adds features that upstream doesn't ship. It has no mobile app.
 
 Klin has no installers yet. Run it from source.
 

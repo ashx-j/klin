@@ -85,10 +85,16 @@ jobs:
       - name: Test
         run: vp run --parallel --concurrency-limit 2 --filter '!t3' --filter '!@t3tools/monorepo' --filter '!@t3tools/web' test
 
+  # Browser tests are bound by the Vite server transforming modules for each file, so a second
+  # runner (and Vite server) halves the job.
   test_web:
-    name: Test Web
+    name: Test Web ${{ matrix.shard }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
     steps:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/setup-ci-deps
@@ -97,7 +103,7 @@ jobs:
       - name: Install Chromium for browser tests
         run: node apps/web/node_modules/playwright/cli.js install --with-deps --only-shell chromium
       - name: Test
-        run: vp run --filter @t3tools/web test
+        run: vp run --filter @t3tools/web test --shard ${{ matrix.shard }}/${{ strategy.job-total }}
 
   # Server test files run one at a time, so the suite is split across 4 runners.
   test_server:
