@@ -3073,7 +3073,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         const restoreSubagentThread = Effect.fn("CodexAdapterV2.restoreSubagentThread")(function* (
           nativeThreadId: string,
         ) {
-          const childThreadId = idAllocator.derive.threadFromProviderThread({
+          const childThreadId = idAllocator.derive.subagentThread({
             driver: CODEX_PROVIDER,
             nativeThreadId,
           });

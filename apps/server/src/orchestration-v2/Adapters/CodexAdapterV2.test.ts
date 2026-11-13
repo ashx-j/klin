@@ -8983,7 +8983,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         Effect.gen(function* () {
           const scenario = "codex-resumed-child-after-restart";
           const idAllocator = yield* IdAllocator.IdAllocatorV2;
-          const childThreadId = idAllocator.derive.threadFromProviderThread({
+          const childThreadId = idAllocator.derive.subagentThread({
             driver: CodexAdapterV2.CODEX_DRIVER_KIND,
             nativeThreadId: RESUME_CHILD_THREAD,
           });
@@ -9176,7 +9176,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         const leaf = "native-codex-resume-leaf-thread";
         const idAllocator = yield* IdAllocator.IdAllocatorV2;
         const [middleThreadId, leafThreadId] = [middle, leaf].map((nativeThreadId) =>
-          idAllocator.derive.threadFromProviderThread({
+          idAllocator.derive.subagentThread({
             driver: CodexAdapterV2.CODEX_DRIVER_KIND,
             nativeThreadId,
           }),
@@ -9342,7 +9342,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       Effect.gen(function* () {
         const scenario = "codex-restored-child-resumed-twice";
         const idAllocator = yield* IdAllocator.IdAllocatorV2;
-        const childThreadId = idAllocator.derive.threadFromProviderThread({
+        const childThreadId = idAllocator.derive.subagentThread({
           driver: CodexAdapterV2.CODEX_DRIVER_KIND,
           nativeThreadId: RESUME_CHILD_THREAD,
         });
