@@ -2648,6 +2648,13 @@ export const layerWithOptions = (
             if (nativeEvent.type === "command_output.delta") {
               return commandOutput.append(nativeEvent);
             }
+            // Only run subscribers act on it; unloading is not provider activity.
+            if (nativeEvent.type === "provider_thread.unloaded") {
+              return publishToSubscribers(entry.eventSubscribers, {
+                type: "event",
+                event: nativeEvent,
+              });
+            }
             if (nativeEvent.type === "prompt_suggestion.updated") {
               return SubscriptionRef.update(promptSuggestionStore, (current) => {
                 const next = new Map(current);

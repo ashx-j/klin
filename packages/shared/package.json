@@ -103,6 +103,10 @@
       "types": "./src/semver.ts",
       "import": "./src/semver.ts"
     },
+    "./pluginFleet": {
+      "types": "./src/pluginFleet.ts",
+      "import": "./src/pluginFleet.ts"
+    },
     "./Net": {
       "types": "./src/Net.ts",
       "import": "./src/Net.ts"

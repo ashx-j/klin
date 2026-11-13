@@ -31,9 +31,11 @@ import {
   type ServerProviderSkill,
   type ThreadId,
 } from "@t3tools/contracts";
+import * as Arr from "effect/Array";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Equivalence from "effect/Equivalence";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
@@ -321,6 +323,9 @@ export function makeCursorAgentOptions(input: {
     ...(input.apiKey === undefined ? {} : { apiKey: input.apiKey }),
     local: {
       ...(input.runtimePolicy.cwd === null ? {} : { cwd: input.runtimePolicy.cwd }),
+      ...(input.runtimePolicy.workspace === undefined
+        ? {}
+        : { dirs: [...input.runtimePolicy.workspace.extraRoots] }),
       autoReview: policy.autoReview,
       settingSources: [...CURSOR_AGENT_SETTING_SOURCES],
       sandboxOptions: {
@@ -968,8 +973,12 @@ interface ActiveCursorTurn {
 interface CursorLiveAgent {
   readonly nativeThreadId: string;
   readonly storeCwd: string;
+  /** The SDK fixes `local.dirs` when the agent opens, so a changed list needs a reopen. */
+  readonly dirs: ReadonlyArray<string>;
   readonly session: CursorAgentSdk.CursorAgentSdkSession;
 }
+
+const sameDirs = Arr.makeEquivalence(Equivalence.String);
 
 export interface CursorAdapterV2Options {
   readonly instanceId: ProviderInstanceId;
@@ -2282,10 +2291,12 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                 : input.resumeFromSession?.cwd
               : undefined) ??
             cwd;
+          const dirs = openInput.runtimePolicy.workspace?.extraRoots ?? [];
           if (
             existing !== null &&
             openInput.operation === "resume" &&
-            existing.nativeThreadId === openInput.agentId
+            existing.nativeThreadId === openInput.agentId &&
+            sameDirs(existing.dirs, dirs)
           ) {
             return existing;
           }
@@ -2325,6 +2336,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           const next = {
             nativeThreadId: sdkSession.agentId,
             storeCwd,
+            dirs,
             session: sdkSession,
           } satisfies CursorLiveAgent;
           yield* Ref.set(liveAgent, next);
@@ -2428,7 +2440,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               detail: "Cursor turn requires non-empty text or attachments.",
             });
           }
-          const text = `${userText}\n\n${buildRuntimeInstructions({ harness: "Cursor", model: turnInput.modelSelection.model })}`;
+          const text = `${userText}\n\n${buildRuntimeInstructions({ harness: "Cursor", model: turnInput.modelSelection.model, runtimePolicy: turnInput.runtimePolicy })}`;
           return {
             message: images.length === 0 ? text : ({ text, images } satisfies SDKUserMessage),
             prompt: userText,

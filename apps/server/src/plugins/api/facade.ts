@@ -52,8 +52,8 @@ export interface FacadeContext {
   readonly call: <A, E>(effect: Effect.Effect<A, E>) => Promise<A>;
   /** Runs an effect in the background for the plugin; failures are logged, not thrown. */
   readonly fork: <A, E>(effect: Effect.Effect<A, E>) => void;
-  /** Exposes a stream as an iterable that ends when the plugin deactivates. */
-  readonly iterate: <A, E>(stream: Stream.Stream<A, E>) => AsyncIterable<A>;
+  /** Exposes a stream as an iterable that ends when the plugin deactivates or `signal` aborts. */
+  readonly iterate: <A, E>(stream: Stream.Stream<A, E>, signal?: AbortSignal) => AsyncIterable<A>;
 }
 
 /**
@@ -79,6 +79,8 @@ export class PluginApiCallError extends Error {
     this.pluginId = pluginId;
   }
 }
+
+const DONE: IteratorReturnResult<undefined> = { done: true, value: undefined };
 
 export const abortEffect = (signal: AbortSignal) =>
   Effect.callback<void>((resume) => {
@@ -145,23 +147,42 @@ export const makeFacadeContext = (input: {
         ),
       );
     },
-    // The plugin pulls, but each pull runs T3's side of the stream, so it is a call too.
-    iterate: (stream) => {
-      const iterable = Stream.toAsyncIterableWith(
-        stream.pipe(Stream.interruptWhen(abortEffect(activation.controller.signal))),
-        context,
-      );
+    // The plugin pulls, but each pull runs T3's side of the stream, so it is a call too. The
+    // stream closes when the plugin stops even if it never pulls again, and nothing reads ahead.
+    iterate: (stream, signal) => {
+      const iterable = Stream.toAsyncIterableWith(stream, context);
+      const stopped =
+        signal === undefined
+          ? activation.controller.signal
+          : AbortSignal.any([activation.controller.signal, signal]);
       return {
         [Symbol.asyncIterator]: () => {
           const iterator = pluginCodeScope.exit(() => iterable[Symbol.asyncIterator]());
+          const close = () =>
+            pluginCodeScope.exit(() => iterator.return?.() ?? Promise.resolve(DONE));
+          const closeOnStop = () => void close().catch(() => undefined);
+          const detach = () => stopped.removeEventListener("abort", closeOnStop);
+          if (stopped.aborted) closeOnStop();
+          else stopped.addEventListener("abort", closeOnStop, { once: true });
           return {
-            next: () => call(Effect.promise(() => iterator.next())),
-            return: () =>
+            // A stream that ended or failed is closed already, and a retry would add a listener.
+            next: () =>
               call(
-                Effect.promise(
-                  () => iterator.return?.() ?? Promise.resolve({ done: true, value: undefined }),
-                ),
+                Effect.promise(async () => {
+                  try {
+                    const result = await iterator.next();
+                    if (result.done === true) detach();
+                    return result;
+                  } catch (error) {
+                    detach();
+                    throw error;
+                  }
+                }),
               ),
+            return: () => {
+              detach();
+              return call(Effect.promise(close));
+            },
           };
         },
       };

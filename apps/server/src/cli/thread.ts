@@ -7,6 +7,7 @@ import {
   ProjectId,
   RunId,
   ThreadId,
+  ThreadMetadataMcpMoveResult,
   TrimmedNonEmptyString,
   type OrchestratorMcpThreadListItem,
   type OrchestratorMcpThreadRun,
@@ -948,12 +949,47 @@ const threadShowCommand = Command.make("show", {
   ),
 );
 
+const threadMoveCommand = Command.make("move", {
+  ...projectLocationFlags,
+  thread: threadArgument,
+  project: Argument.String("project").pipe(
+    Argument.withDescription("Destination project id or a path inside it."),
+  ),
+  json: jsonFlag,
+}).pipe(
+  Command.withDescription(
+    "Move a thread to another project. A thread in a worktree can only move within its repository.",
+  ),
+  Command.withHandler((flags) =>
+    Effect.gen(function* () {
+      const threadId = yield* decodeThreadId(flags.thread);
+      yield* withThreadTools(
+        flags,
+        Effect.fn("cli.thread.move")(function* (tools) {
+          const project = yield* resolveProject(tools, flags.project);
+          const moved = yield* tools.call(
+            "t3_thread_update",
+            { threadId, action: "move_project", projectId: project.id },
+            ThreadMetadataMcpMoveResult,
+          );
+          if (flags.json) return yield* printJson(moved);
+          yield* Console.log(`Moved to ${project.title}.`);
+          if (moved.scratchFolder !== undefined) {
+            yield* Console.log(`Files from before the move are still in ${moved.scratchFolder}.`);
+          }
+        }),
+      );
+    }).pipe(reportThreadErrors),
+  ),
+);
+
 export const threadCommand = Command.make("thread").pipe(
-  Command.withDescription("Start, message, and read threads on the running server."),
+  Command.withDescription("Start, message, read, and move threads on the running server."),
   Command.withSubcommands([
     threadListCommand,
     threadStartCommand,
     threadSendCommand,
     threadShowCommand,
+    threadMoveCommand,
   ]),
 );

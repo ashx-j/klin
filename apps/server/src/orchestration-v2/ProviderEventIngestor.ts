@@ -645,6 +645,7 @@ export const layer: Layer.Layer<
               ];
             }
             case "background_work.updated":
+            case "provider_thread.unloaded":
               return [];
             case "command_output.delta":
             case "prompt_suggestion.updated":
