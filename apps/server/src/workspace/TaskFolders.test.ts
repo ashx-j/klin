@@ -99,6 +99,7 @@ it.live("lays a plain wrapper out as links around its repositories' worktrees", 
       const api = yield* repository("shop/services/api");
       const web = yield* repository("shop/web");
       const unpicked = yield* repository("shop/unpicked");
+      yield* repository("shop/untracked");
       yield* fileSystem.makeDirectory(path.join(shop, "notes"));
       yield* fileSystem.makeDirectory(path.join(shop, ".git-not"));
       yield* fileSystem.writeFileString(path.join(shop, "AGENTS.md"), "root rules\n");
@@ -138,8 +139,9 @@ it.live("lays a plain wrapper out as links around its repositories' worktrees", 
       // The folder leading to a repository is real, and still shows what else it holds.
       assert.isFalse(yield* isLink(path.join(root, "services")));
       assert.isTrue(yield* isLink(path.join(root, "services", "README.md")));
-      // A tracked repository that was not chosen is absent: a link would be the original checkout.
+      // A repository without a worktree is absent, tracked or not: a link would be the original.
       assert.isFalse(yield* fileSystem.exists(path.join(root, "unpicked")));
+      assert.isFalse(yield* fileSystem.exists(path.join(root, "untracked")));
       assert.isFalse(yield* fileSystem.exists(path.join(root, ".git")));
       for (const worktree of [path.join(root, "services", "api"), path.join(root, "web")]) {
         assert.equal(yield* run(worktree, "symbolic-ref", "--short", "HEAD"), "feature");
@@ -461,8 +463,7 @@ it.live("adds a repository to an existing task folder on the thread's branch", (
       );
       assert.equal(yield* run(late, "symbolic-ref", "--short", "HEAD"), "main");
 
-      // The link to the original checkout is one this service made; a folder with files is not.
-      yield* fileSystem.remove(path.join(root, "taken"));
+      // A folder the thread filled is not one this service made.
       yield* fileSystem.makeDirectory(path.join(root, "taken"));
       yield* fileSystem.writeFileString(path.join(root, "taken", "draft.md"), "mine\n");
       for (const [repositoryPath, detail] of [

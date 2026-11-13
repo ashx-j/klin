@@ -331,7 +331,7 @@ const make = Effect.gen(function* () {
   /**
    * Stands in for a folder that is not a repository: every entry links to the original, so
    * nothing is copied, except the folders that lead to a tracked repository, which are real so a
-   * worktree can sit in them.
+   * worktree can sit in them. A repository is left out: a link to it would be the original checkout.
    */
   const linkFolder: (
     source: string,
@@ -345,7 +345,7 @@ const make = Effect.gen(function* () {
         const entry = path.join(source, name);
         const link = path.join(target, name);
         if (name === ".git" || name === skip || trackedRepositories.includes(entry)) continue;
-        if (yield* exists(link)) continue;
+        if ((yield* exists(link)) || (yield* isRepository(entry))) continue;
         if (trackedRepositories.some((repository) => isWithinRoot(path, repository, entry))) {
           yield* linkFolder(entry, link, trackedRepositories);
         } else {
