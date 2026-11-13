@@ -22,6 +22,7 @@ on:
       - packages/ssh/src/tunnel.ts
       - scripts/build-cli-archive.ts
       - scripts/build-desktop-artifact.ts
+      - scripts/lib/public-config.ts
       - scripts/smoke-cli-archive.ts
       - apps/desktop/**
   workflow_dispatch:
@@ -137,6 +138,14 @@ jobs:
 
       - name: Smoke-test Linux server archive
         run: node scripts/smoke-cli-archive.ts --archive release-cli/* --expect-version "${{ steps.version.outputs.version }}"
+
+      # `status --json` reports `connect: null` when a build change stops building T3 Connect in.
+      - name: Check the server archive has T3 Connect
+        run: |
+          dir="$(mktemp -d)"
+          tar -xzf release-cli/*.tar.gz -C "$dir"
+          HOME="$dir" "$dir"/t3-*/t3 status --json \
+            | node -e 'if (JSON.parse(require("node:fs").readFileSync(0, "utf8")).connect === null) throw new Error("The server archive has no T3 Connect config")'
 
       # Unsigned. GITHUB_REPOSITORY points the app's update feed at this repository's releases.
       - name: Build Windows installer

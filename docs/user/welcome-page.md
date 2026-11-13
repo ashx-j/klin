@@ -59,7 +59,8 @@ this computer when T3 Code asks, so the app can reach it. Sign in to the app wit
 the same account. If you are signed in but this computer is not shared yet, select
 **Set up T3 Connect**. If T3 Connect is on but the app cannot reach this computer,
 select **Check T3 Connect** to see why. The page leaves the phone out on builds
-without T3 Connect, or when your organization turns it off. You can still pair the
+without T3 Connect, in Klin's desktop app, or when your organization turns it off.
+For Klin's desktop app, run `klin connect link` in a terminal and restart the app. You can still pair the
 app with a code from **Settings → Sharing & access**.
 
 ## Projects

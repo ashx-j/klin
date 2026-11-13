@@ -72,6 +72,11 @@ describe("loadRepoEnv", () => {
     const optedOut = loadRepoEnv({ baseEnv: {}, repoRoot, connectFromExample: true });
     expect(optedOut.T3CODE_CLERK_PUBLISHABLE_KEY).toBeUndefined();
     expect(optedOut.VITE_T3CODE_RELAY_URL).toBeUndefined();
+
+    NodeFS.writeFileSync(NodePath.join(repoRoot, ".env"), "VITE_CLERK_PUBLISHABLE_KEY=pk_dev\n");
+    const aliased = loadRepoEnv({ baseEnv: {}, repoRoot, connectFromExample: true });
+    expect(aliased.T3CODE_CLERK_PUBLISHABLE_KEY).toBe("pk_dev");
+    expect(aliased.T3CODE_RELAY_URL).toBeUndefined();
   });
 });
 

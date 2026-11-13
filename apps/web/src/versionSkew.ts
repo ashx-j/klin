@@ -5,6 +5,7 @@ import type {
   ServerSelfUpdateCapability,
 } from "@t3tools/contracts";
 import type { ServerUpdateState } from "@t3tools/client-runtime/state/server";
+import { APP_SLUG } from "@t3tools/shared/appIdentity";
 import { compareSemverVersions, parseSemver } from "@t3tools/shared/semver";
 import * as Schema from "effect/Schema";
 
@@ -51,6 +52,11 @@ export function resolveVersionMismatch(
   const normalizedClientVersion = normalizeVersion(clientVersion);
   const normalizedServerVersion = normalizeVersion(serverVersion);
   if (!normalizedClientVersion || !normalizedServerVersion) {
+    return null;
+  }
+  // Klin and T3 Code each install only their own releases, so neither can update the other.
+  const isKlinRelease = (version: string) => parseSemver(version)?.prerelease[0] === APP_SLUG;
+  if (isKlinRelease(normalizedClientVersion) !== isKlinRelease(normalizedServerVersion)) {
     return null;
   }
 

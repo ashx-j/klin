@@ -114,6 +114,15 @@ describe("versionSkew", () => {
     });
   });
 
+  it("offers no update between Klin and T3 Code servers", () => {
+    branding.APP_VERSION = "0.1.10-klin.9";
+    expect(resolveVersionMismatch("0.1.9")).toBeNull();
+    expect(resolveVersionMismatch("0.1.9-klin.5")).toMatchObject({ serverVersion: "0.1.9-klin.5" });
+
+    branding.APP_VERSION = "0.1.11";
+    expect(resolveVersionMismatch("0.1.10-klin.9")).toBeNull();
+  });
+
   it("falls back to string inequality when a version is not semver", () => {
     expect(resolveVersionMismatch("dev")).toEqual({
       clientVersion: "0.0.34",
