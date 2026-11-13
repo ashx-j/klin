@@ -11,6 +11,7 @@ import { assert, it } from "@effect/vitest";
 import {
   CommandId,
   EventId,
+  PROJECT_TRACKED_FOLDERS_MAX,
   ProviderInstanceId,
   ThreadId,
   type OrchestrationV2AppThread,
@@ -132,6 +133,21 @@ it.effect(
       assert.equal((yield* readProjects(baseDir)).projects[0]?.title, "Beta");
 
       yield* runCli(["project", "remove", added?.id ?? "", "--base-dir", baseDir]);
+      assert.deepEqual((yield* readProjects(baseDir)).projects, []);
+
+      const tooMany = Array.from({ length: PROJECT_TRACKED_FOLDERS_MAX + 1 }, (_, index) => [
+        "--track",
+        NodePath.join(NodeOS.tmpdir(), `t3-v2-project-track-${index}`),
+      ]).flat();
+      const refused = yield* runCli([
+        "project",
+        "add",
+        workspaceRoot,
+        ...tooMany,
+        "--base-dir",
+        baseDir,
+      ]).pipe(Effect.flip);
+      assert.include(refused.message, `at most ${PROJECT_TRACKED_FOLDERS_MAX} folders`);
       assert.deepEqual((yield* readProjects(baseDir)).projects, []);
 
       // A script cannot answer the app's checklist, so the flags track what it would offer.

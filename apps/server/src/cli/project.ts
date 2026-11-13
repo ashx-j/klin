@@ -160,6 +160,18 @@ export class ProjectAlreadyExistsError extends Schema.TaggedError<ProjectAlready
   }
 }
 
+export class ProjectTooManyTrackedFoldersError extends Schema.TaggedError<ProjectTooManyTrackedFoldersError>()(
+  "ProjectTooManyTrackedFoldersError",
+  {
+    operation: Schema.Literal("addProject"),
+    count: Schema.Number,
+  },
+) {
+  override get message(): string {
+    return `A project can track at most ${PROJECT_TRACKED_FOLDERS_MAX} folders, and --track names ${this.count}.`;
+  }
+}
+
 export const ProjectCommandError = Schema.Union([
   ProjectCommandIdGenerationError,
   ProjectLiveServerDeclaredResponseError,
@@ -169,6 +181,7 @@ export const ProjectCommandError = Schema.Union([
   ProjectIdentifierEmptyError,
   ProjectNotFoundError,
   ProjectAlreadyExistsError,
+  ProjectTooManyTrackedFoldersError,
 ]);
 export type ProjectCommandError = typeof ProjectCommandError.Type;
 
@@ -513,12 +526,19 @@ const projectAddCommand = Command.make("add", {
 
         const title = yield* resolveProjectTitle(workspaceRoot, Option.getOrUndefined(flags.title));
         const path = yield* Path.Path;
-        // Scanned here, not by a running server: this command runs on the server's machine.
-        const scanned = flags.trackRepos ? (yield* scanFolders({ workspaceRoot })).folders : [];
         const named = flags.track.map((folder) => {
           const resolved = path.resolve(folder);
           return { path: resolved, name: trackedFolderName(path.basename(resolved)) || resolved };
         });
+        const namedCount = new Set(named.map((folder) => folder.path)).size;
+        if (namedCount > PROJECT_TRACKED_FOLDERS_MAX) {
+          return yield* new ProjectTooManyTrackedFoldersError({
+            operation: "addProject",
+            count: namedCount,
+          });
+        }
+        // Scanned here, not by a running server: this command runs on the server's machine.
+        const scanned = flags.trackRepos ? (yield* scanFolders({ workspaceRoot })).folders : [];
         const trackedFolders = [...named, ...scanned]
           .filter(
             (folder, index, all) => all.findIndex((other) => other.path === folder.path) === index,
