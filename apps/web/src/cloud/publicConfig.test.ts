@@ -70,7 +70,7 @@ describe("hasCloudPublicConfig", () => {
       expect(hasCloudPublicConfig()).toBe(expected);
     });
 
-    it("offers sign-in in the desktop app only where T3 Connect accepts its origin", () => {
+    it("follows the desktop sign-in switch in the Electron auth shell", () => {
       vi.stubGlobal("window", { location: new URL("file:///app/index.html"), desktopBridge: {} });
 
       expect(hasCloudPublicConfig()).toBe(DESKTOP_CONNECT_SIGN_IN);

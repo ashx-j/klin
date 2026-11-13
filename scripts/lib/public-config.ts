@@ -35,12 +35,19 @@ export function loadRepoEnv({
 }: {
   readonly baseEnv?: Environment;
   readonly repoRoot?: string;
-  /** Klin's dev servers: T3 Connect's production identifiers from `.env.example`, below every other source. */
+  /**
+   * Klin's dev servers: T3 Connect's production identifiers from `.env.example` when no other
+   * source names any of them. Naming one, even empty, keeps the whole set out.
+   */
   readonly connectFromExample?: boolean;
 } = {}): Record<string, string | undefined> {
   const rootEnv = readEnvFile(NodePath.join(repoRoot, ".env"));
   const localEnv = readEnvFile(NodePath.join(repoRoot, ".env.local"));
-  const exampleEnv = connectFromExample ? readEnvFile(NodePath.join(repoRoot, ".env.example")) : {};
+  const connectNamed = [baseEnv, localEnv, rootEnv].some((source) =>
+    CONNECT_CONFIG_NAMES.some((name) => source[name] !== undefined),
+  );
+  const exampleEnv =
+    connectFromExample && !connectNamed ? readEnvFile(NodePath.join(repoRoot, ".env.example")) : {};
   const connectExample = Object.fromEntries(
     CONNECT_CONFIG_NAMES.map((name) => [name, exampleEnv[name]]),
   );
