@@ -192,8 +192,8 @@ function CheckoutRepositories({ member }: { member: SidebarProjectGroupMember })
       />
       {tracked.length === 0 ? (
         <p className="px-3 py-2 text-base text-muted-foreground sm:px-4 sm:text-sm">
-          Track a repository to give it its own changes and review, and to let agents work across it
-          and this folder.
+          Agents are told about the folders you track and can work in them. A tracked Git repository
+          also gets its own changes, diffs, Git actions and pull requests.
         </p>
       ) : (
         tracked.map((folder) => {

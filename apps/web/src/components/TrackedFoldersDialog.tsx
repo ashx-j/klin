@@ -92,8 +92,8 @@ export function TrackedFoldersDialog(props: {
             {scan.codeWorkspaceFile
               ? `, including the ones ${fileBasename(scan.codeWorkspaceFile)} lists`
               : ""}
-            . Tracked repositories get their own changes and review, and agents can work across
-            them.
+            . Agents are told about the folders you track and can work in them. Each tracked Git
+            repository also gets its own changes, diffs, Git actions and pull requests.
           </DialogDescription>
           {showTools ? (
             <div className="flex items-center gap-2 pt-1">

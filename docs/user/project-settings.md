@@ -48,16 +48,17 @@ and other phone-only settings ignore the filter.
 
 ## Projects with several repositories
 
-A project can cover more than one folder: a plain folder that holds several repositories, a
-repository next to others it depends on, or the folders a `.code-workspace` file lists. Agents
-can then read and change every tracked folder from one thread.
+A project can track more than one folder: the repositories inside a plain folder, a repository
+next to others it depends on, or the folders a `.code-workspace` file lists. Agents are told about
+the tracked folders and can work in them. A tracked Git repository also gets its own turn changes,
+diffs, Git actions and pull requests. A tracked folder that is not a Git repository gets agent
+access only.
 
-When you add a folder with the command palette or on mobile, T3 Code looks one level down for
-repositories and reads a `.code-workspace` file if there is one, then asks which to track. To
-change the list later, open **Settings → Projects**, choose the project, and use **Rescan**,
-**Add folder**, or **Remove** under **Repositories**. **Add folder** takes any folder on that
-machine, including one outside the project folder. Removing a folder from the list never deletes
-files.
+When you add a folder with the command palette, T3 Code looks one level down for Git repositories
+and reads the folders a `.code-workspace` file lists, then asks which to track. To change the list
+later, open **Settings → Projects**, choose the project, and use **Rescan**, **Add folder**, or
+**Remove** under **Repositories**. **Add folder** takes any folder on that machine, including one
+outside the project folder. Removing a folder from the list never deletes files.
 
 From a script, `t3 project add <path> --track-repos` tracks every repository it finds, and
 `--track <folder>` adds one by path.
@@ -66,13 +67,19 @@ Each turn's changes are listed per repository; see
 [Review turn changes](source-control.md#review-turn-changes).
 
 **New worktree** works for these projects too, including a plain folder that is not a repository
-itself. The thread gets its own folder laid out like the project, and each repository you choose
-gets its own worktree there, all on the thread's branch. Pick the repositories from the
-repositories control next to the workspace picker before you send: every tracked repository is
-included when the project tracks eight or fewer, and none until you choose when it tracks more.
-To bring another repository into a running thread, open the thread details panel and pick it under
-**Other repositories**. In a plain folder, the files outside your repositories are shared links to
-the originals, not copies, so editing one changes it for every thread.
+itself. The thread gets its own folder laid out like the project, with a worktree of each tracked
+Git repository you choose, and the agent works there instead of in the original folders. Every
+worktree uses the thread's branch name, and a tracked repository's worktree starts from that
+repository's default branch. Pick the repositories from the repositories control next to the workspace picker
+before you send: every tracked Git repository is included when the project tracks eight or fewer,
+and none until you choose when it tracks more. To add another tracked repository to a running
+worktree thread, open the thread details panel and pick it under **Other repositories**.
+[Revert files too](composer.md#edit-an-earlier-prompt) puts each of the thread's worktrees back.
+
+When the project folder is not a Git repository, the thread's folder links to the project folder's
+own files and to its folders that are not Git repositories instead of copying them, so editing one
+there changes the original. Git repositories that get no worktree are left out, whether you did
+not choose them or the project does not track them.
 
 ## Pin and archive projects
 
