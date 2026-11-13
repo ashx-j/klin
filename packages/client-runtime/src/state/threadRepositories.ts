@@ -118,8 +118,13 @@ export function rewindFileRestore(input: {
     : null;
 }
 
+// A backslash separates folders only in a Windows path; on POSIX it is part of a folder's name.
+function slashSeparated(path: string): string {
+  return /^(?:[a-zA-Z]:|\\\\)/.test(path) ? path.replaceAll("\\", "/") : path;
+}
+
 function pathSegments(path: string): { root: string; segments: string[] } | undefined {
-  const normalized = path.replaceAll("\\", "/");
+  const normalized = slashSeparated(path);
   const segments = normalized.split("/").filter((segment) => segment.length > 0);
   if (normalized.startsWith("/")) return { root: "/", segments };
   const drive = segments[0];
@@ -157,7 +162,7 @@ function repositoryScope(
     threadCwd === undefined ? undefined : relativeFolderPath(threadCwd, scope.cwd);
   return {
     scopeId: scope.id,
-    name: scope.label ?? scope.cwd.replaceAll("\\", "/").split("/").findLast(Boolean) ?? scope.cwd,
+    name: scope.label ?? slashSeparated(scope.cwd).split("/").findLast(Boolean) ?? scope.cwd,
     repositoryPath,
     cwd: scope.cwd,
     ...(relativePath === undefined ? {} : { relativePath }),

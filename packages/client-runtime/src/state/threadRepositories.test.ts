@@ -143,6 +143,15 @@ describe("threadRepositoryScopes", () => {
         checkpointScopes: [scope("scope-root", "C:\\work"), scope("scope-api", "D:\\api", {})],
       })[0],
     ).not.toHaveProperty("relativePath");
+    // On POSIX a backslash is part of a folder's name.
+    expect(
+      threadRepositoryScopes({
+        checkpointScopes: [
+          scope("scope-root", "/work"),
+          scope("scope-api", "/work/api\\client", {}),
+        ],
+      })[0],
+    ).toMatchObject({ name: "api\\client", relativePath: "api\\client" });
   });
 });
 
