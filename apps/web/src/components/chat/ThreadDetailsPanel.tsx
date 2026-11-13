@@ -107,9 +107,10 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
   const project = useProject(scopeProjectRef(props.environmentId, props.projectId));
   const serverConfig = useServerConfigs().get(props.environmentId);
   const tracksFolders = (project?.trackedFolders?.length ?? 0) > 0;
-  // A worktree thread reaches tracked repositories only through its own task folder.
+  // A worktree thread reaches tracked repositories only through its own task folder, which
+  // outlives the project's tracked folders.
   const taskFolderQuery = useEnvironmentQuery(
-    props.isServerThread && props.worktreePath !== null && tracksFolders
+    props.isServerThread && props.worktreePath !== null
       ? filesystemEnvironment.taskFolder({
           environmentId: props.environmentId,
           input: { worktreePath: props.worktreePath },
@@ -192,7 +193,7 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
           git:
             offersGit &&
             props.activeProjectName !== undefined &&
-            (folderIsRepo || !tracksFolders) &&
+            (folderIsRepo || (!tracksFolders && taskFolder === null)) &&
             (visible.gitActions || (visible.changes && folderIsRepo)),
           // A thread in a single worktree of its own reaches no tracked repository.
           repositories:
