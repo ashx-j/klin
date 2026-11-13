@@ -402,6 +402,8 @@ export function startThreadNotifications(
       });
     }
     if (hasNotificationSound(nextMode)) {
+      // Electron plays audio without a gesture, so a window closed to the tray before any click still sounds.
+      if (window.desktopBridge) unlockNotificationAudio();
       document.addEventListener("pointerdown", unlockNotificationAudio);
       document.addEventListener("keydown", unlockNotificationAudio);
       stops.push(() => {

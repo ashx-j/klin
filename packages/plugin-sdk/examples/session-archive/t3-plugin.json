@@ -1,0 +1,37 @@
+{
+  "id": "session-archive",
+  "name": "Session archive",
+  "version": "0.1.0",
+  "description": "Keeps every prompt, reply, reasoning step and tool call from all your machines in one SQLite file on a hub machine.",
+  "engines": { "t3": ">=0.1.8" },
+  "server": "./server.cjs",
+  "settingsSchema": {
+    "type": "object",
+    "properties": {
+      "archivePath": {
+        "type": "string",
+        "title": "Archive file",
+        "description": "Set this on the hub only. The absolute path of the archive database, such as /srv/archive/klin-sessions.sqlite. Setting it makes this machine the hub."
+      },
+      "hubUrl": {
+        "type": "string",
+        "title": "Hub address",
+        "description": "The hub's address, best its Tailscale IP, such as http://100.64.0.1:4790. Other machines send their events there, and the hub listens on that IP and port. Leave it empty on a hub that only archives its own events.",
+        "pattern": "^$|^http://"
+      },
+      "key": {
+        "type": "string",
+        "format": "t3-secret",
+        "title": "Shared key",
+        "description": "The same key on every machine, at least 16 characters. The hub refuses events without it."
+      }
+    },
+    "additionalProperties": false
+  },
+  "permissions": [
+    "Reads every orchestration event this machine stores: prompts, replies, reasoning, tool calls and subagents",
+    "On the hub, writes those events to the archive file set in Archive file",
+    "On the hub, listens on the port in Hub address: only at its host when that is an IP address, otherwise on every network interface",
+    "On other machines, sends their events to the hub at Hub address"
+  ]
+}

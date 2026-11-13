@@ -118,6 +118,10 @@ vi.mock("./useSettings", () => ({
       timestampFormat: "12-hour",
     }),
 }));
+vi.mock("./useMoveThreadToProject", () => ({
+  readThreadMoveTargets: () => [],
+  useMoveThreadToProject: () => async () => {},
+}));
 vi.mock("./useThreadActions", () => ({
   canTurnThreadIntoProject: () => false,
   useThreadActions: () =>

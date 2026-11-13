@@ -93,6 +93,18 @@ import {
   FilesystemBrowseError,
 } from "./filesystem.ts";
 import {
+  WorkspaceFoldersError,
+  TaskFolder,
+  TaskFolderError,
+  WorkspaceAddTaskFolderRepositoryInput,
+  WorkspaceListFoldersInput,
+  WorkspaceListFoldersResult,
+  WorkspaceScanFoldersInput,
+  WorkspaceScanFoldersResult,
+  WorkspaceTaskFolderInput,
+  WorkspaceTaskFolderResult,
+} from "./workspaceFolders.ts";
+import {
   AgentSessionImportInput,
   AgentSessionImportProjectChangedError,
   AgentSessionImportProjectNotFoundError,
@@ -240,6 +252,8 @@ import {
   ProjectCreateNewInput,
   ProjectCreateNewResult,
   ProjectCreateFromThreadInput,
+  ProjectMoveThreadInput,
+  ProjectMoveThreadResult,
   ProjectCreateFromThreadResult,
   ProjectEnsureScratchResult,
   ProjectListEntriesError,
@@ -386,9 +400,15 @@ import {
   ScheduledTaskMutationResult,
 } from "./scheduledTask.ts";
 import {
+  PluginCreateDownloadUrlInput,
+  PluginCreateDownloadUrlResult,
   PluginCreateUploadUrlInput,
   PluginCreateUploadUrlResult,
   PluginError,
+  PluginFleetApplyInput,
+  PluginFleetApplyResult,
+  PluginFleetSetKeptOffInput,
+  PluginFleetSetSharingInput,
   PluginInvokeInput,
   PluginInvokeResult,
   PluginLinkInput,
@@ -447,10 +467,15 @@ export const WS_METHODS = {
   projectsEnsureScratch: "projects.ensureScratch",
   projectsCreateNew: "projects.createNew",
   projectsCreateFromThread: "projects.createFromThread",
+  projectsMoveThread: "projects.moveThread",
 
   shellOpenInEditor: "shell.openInEditor",
 
   filesystemBrowse: "filesystem.browse",
+  workspaceListFolders: "workspace.listFolders",
+  workspaceScanFolders: "workspace.scanFolders",
+  workspaceTaskFolder: "workspace.taskFolder",
+  workspaceAddTaskFolderRepository: "workspace.addTaskFolderRepository",
   filesystemGetMetadata: "filesystem.getMetadata",
   agentSessionsScan: "agentSessions.scan",
   agentSessionsImport: "agentSessions.import",
@@ -595,6 +620,10 @@ export const WS_METHODS = {
   pluginsSettingsUpdate: "plugins.settings.update",
   pluginsInvoke: "plugins.invoke",
   pluginsSubscribe: "plugins.subscribe",
+  pluginsCreateDownloadUrl: "plugins.createDownloadUrl",
+  pluginsFleetApply: "plugins.fleet.apply",
+  pluginsFleetSetSharing: "plugins.fleet.setSharing",
+  pluginsFleetSetKeptOff: "plugins.fleet.setKeptOff",
 
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
   cloudInstallRelayClient: "cloud.installRelayClient",
@@ -1458,6 +1487,12 @@ const WsProjectsCreateFromThreadRpc = Rpc.make(WS_METHODS.projectsCreateFromThre
   error: Schema.Union([OrchestrationDispatchCommandError, EnvironmentAuthorizationError]),
 });
 
+const WsProjectsMoveThreadRpc = Rpc.make(WS_METHODS.projectsMoveThread, {
+  payload: ProjectMoveThreadInput,
+  success: ProjectMoveThreadResult,
+  error: Schema.Union([OrchestrationDispatchCommandError, EnvironmentAuthorizationError]),
+});
+
 const WsShellOpenInEditorRpc = Rpc.make(WS_METHODS.shellOpenInEditor, {
   payload: LaunchEditorInput,
   error: Schema.Union([ExternalLauncherError, EnvironmentAuthorizationError]),
@@ -1474,6 +1509,33 @@ const WsFilesystemBrowseRpc = Rpc.make(WS_METHODS.filesystemBrowse, {
   success: FilesystemBrowseResult,
   error: Schema.Union([FilesystemBrowseError, EnvironmentAuthorizationError]),
 });
+
+const WsWorkspaceListFoldersRpc = Rpc.make(WS_METHODS.workspaceListFolders, {
+  payload: WorkspaceListFoldersInput,
+  success: WorkspaceListFoldersResult,
+  error: Schema.Union([WorkspaceFoldersError, EnvironmentAuthorizationError]),
+});
+
+const WsWorkspaceScanFoldersRpc = Rpc.make(WS_METHODS.workspaceScanFolders, {
+  payload: WorkspaceScanFoldersInput,
+  success: WorkspaceScanFoldersResult,
+  error: Schema.Union([WorkspaceFoldersError, EnvironmentAuthorizationError]),
+});
+
+const WsWorkspaceTaskFolderRpc = Rpc.make(WS_METHODS.workspaceTaskFolder, {
+  payload: WorkspaceTaskFolderInput,
+  success: WorkspaceTaskFolderResult,
+  error: Schema.Union([TaskFolderError, EnvironmentAuthorizationError]),
+});
+
+const WsWorkspaceAddTaskFolderRepositoryRpc = Rpc.make(
+  WS_METHODS.workspaceAddTaskFolderRepository,
+  {
+    payload: WorkspaceAddTaskFolderRepositoryInput,
+    success: TaskFolder,
+    error: Schema.Union([TaskFolderError, EnvironmentAuthorizationError]),
+  },
+);
 
 const WsAgentSessionsScanRpc = Rpc.make(WS_METHODS.agentSessionsScan, {
   payload: AgentSessionScanInput,
@@ -2190,6 +2252,31 @@ const WsPluginsSubscribeRpc = Rpc.make(WS_METHODS.pluginsSubscribe, {
   stream: true,
 });
 
+/** Signs the URL a client downloads a plugin's files from, to copy it to another machine. */
+const WsPluginsCreateDownloadUrlRpc = Rpc.make(WS_METHODS.pluginsCreateDownloadUrl, {
+  payload: PluginCreateDownloadUrlInput,
+  success: PluginCreateDownloadUrlResult,
+  error: PluginRpcError,
+});
+
+const WsPluginsFleetApplyRpc = Rpc.make(WS_METHODS.pluginsFleetApply, {
+  payload: PluginFleetApplyInput,
+  success: PluginFleetApplyResult,
+  error: PluginRpcError,
+});
+
+const WsPluginsFleetSetSharingRpc = Rpc.make(WS_METHODS.pluginsFleetSetSharing, {
+  payload: PluginFleetSetSharingInput,
+  success: PluginFleetSetSharingInput,
+  error: PluginRpcError,
+});
+
+const WsPluginsFleetSetKeptOffRpc = Rpc.make(WS_METHODS.pluginsFleetSetKeptOff, {
+  payload: PluginFleetSetKeptOffInput,
+  success: PluginFleetSetKeptOffInput,
+  error: PluginRpcError,
+});
+
 const WsSubscribeAuthAccessRpc = Rpc.make(WS_METHODS.subscribeAuthAccess, {
   payload: Schema.Struct({}),
   success: AuthAccessStreamEvent,
@@ -2290,6 +2377,10 @@ export const WsRpcGroup = RpcGroup.make(
   WsPluginsSettingsUpdateRpc,
   WsPluginsInvokeRpc,
   WsPluginsSubscribeRpc,
+  WsPluginsCreateDownloadUrlRpc,
+  WsPluginsFleetApplyRpc,
+  WsPluginsFleetSetSharingRpc,
+  WsPluginsFleetSetKeptOffRpc,
   WsServerReportClientActivityRpc,
   WsCloudGetRelayClientStatusRpc,
   WsCloudInstallRelayClientRpc,
@@ -2349,10 +2440,15 @@ export const WsRpcGroup = RpcGroup.make(
   WsProjectsEnsureScratchRpc,
   WsProjectsCreateNewRpc,
   WsProjectsCreateFromThreadRpc,
+  WsProjectsMoveThreadRpc,
   WsProjectsWriteFileRpc,
   WsProjectsMutateRpc,
   WsShellOpenInEditorRpc,
   WsFilesystemBrowseRpc,
+  WsWorkspaceListFoldersRpc,
+  WsWorkspaceScanFoldersRpc,
+  WsWorkspaceTaskFolderRpc,
+  WsWorkspaceAddTaskFolderRepositoryRpc,
   WsFilesystemGetMetadataRpc,
   WsAgentSessionsScanRpc,
   WsAgentSessionsImportRpc,

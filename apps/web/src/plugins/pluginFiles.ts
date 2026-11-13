@@ -1,7 +1,16 @@
 import type { PreparedHttpAuthorization } from "@t3tools/client-runtime/connection";
 import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
-import { runAtomCommand, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import { type EnvironmentId, PluginMutationResult, type PluginState } from "@t3tools/contracts";
+import {
+  type AtomCommandResult,
+  runAtomCommand,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
+import {
+  type EnvironmentId,
+  type PluginFleetEntry,
+  PluginMutationResult,
+  type PluginState,
+} from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
 import { appAtomRegistry } from "../rpc/atomRegistry";
@@ -87,31 +96,85 @@ export async function withDownloadRetries<A>(
 
 const decodeMutationResult = Schema.decodeUnknownSync(Schema.fromJsonString(PluginMutationResult));
 
-// The files go over HTTP to a URL the server signs, which needs no other credentials, so a large
-// folder does not hold up the WebSocket.
-export async function uploadPluginFolder(
+/** Signs a transfer URL on `environmentId` and resolves it against that environment. */
+async function signedUrl<A extends { readonly relativeUrl: string }>(
   environmentId: EnvironmentId,
-  files: ReadonlyArray<PluginFolderFile>,
-): Promise<PluginState> {
-  const minted = await runAtomCommand(
-    appAtomRegistry,
-    pluginEnvironment.createPluginUploadUrl,
-    { environmentId, input: {} },
-    { reportFailure: false },
-  );
+  mint: () => Promise<AtomCommandResult<A, unknown>>,
+): Promise<{ readonly url: string; readonly minted: A }> {
+  const minted = await mint();
   if (minted._tag !== "Success") {
     const error = squashAtomCommandFailure(minted);
-    throw error instanceof Error ? error : new Error("Could not start the upload.");
+    throw error instanceof Error ? error : new Error("Could not start the transfer.");
   }
   const connection = readPreparedConnection(environmentId);
   const url =
     connection === null ? null : resolveAssetUrl(connection.httpBaseUrl, minted.value.relativeUrl);
   if (url === null) throw new Error("The environment is not connected.");
-  const body = new FormData();
-  // Escaped, so no browser or parser changes a path's quotes, slashes or other characters.
-  for (const { path, file } of files) body.append("file", file, encodeURIComponent(path));
+  return { url, minted: minted.value };
+}
+
+// The files go over HTTP to a URL the server signs, which needs no other credentials, so a large
+// folder does not hold up the WebSocket.
+async function postPluginForm(environmentId: EnvironmentId, body: FormData): Promise<PluginState> {
+  const { url } = await signedUrl(environmentId, () =>
+    runAtomCommand(
+      appAtomRegistry,
+      pluginEnvironment.createPluginUploadUrl,
+      { environmentId, input: {} },
+      { reportFailure: false },
+    ),
+  );
   const response = await fetch(url, { method: "POST", body });
   const text = await response.text();
   if (!response.ok) throw new Error(text || `The upload failed with ${response.status}.`);
   return decodeMutationResult(text).plugin;
+}
+
+export async function uploadPluginFolder(
+  environmentId: EnvironmentId,
+  files: ReadonlyArray<PluginFolderFile>,
+): Promise<PluginState> {
+  const body = new FormData();
+  // Escaped, so no browser or parser changes a path's quotes, slashes or other characters.
+  for (const { path, file } of files) body.append("file", file, encodeURIComponent(path));
+  return postPluginForm(environmentId, body);
+}
+
+/**
+ * Copies a plugin's files from one of the user's machines to another, with the shared entry that
+ * says which files they are and whether the plugin is on. The download comes in the upload's
+ * format, so its parts go back out as they are.
+ */
+export async function copyPlugin(
+  from: EnvironmentId,
+  to: EnvironmentId,
+  entry: PluginFleetEntry,
+): Promise<PluginState> {
+  const { url, minted } = await signedUrl(from, () =>
+    runAtomCommand(
+      appAtomRegistry,
+      pluginEnvironment.createPluginDownloadUrl,
+      { environmentId: from, input: { pluginId: entry.pluginId } },
+      { reportFailure: false },
+    ),
+  );
+  if (minted.revision !== entry.revision) {
+    // A rescan records an installed copy's new files as a newer change, which then copies itself.
+    await runAtomCommand(
+      appAtomRegistry,
+      pluginEnvironment.rescanPlugins,
+      { environmentId: from, input: {} },
+      { reportFailure: false },
+    );
+    throw new Error(
+      "Its files changed on the machine it is copied from since they were shared. A linked folder shares its changes when you choose Reload there.",
+    );
+  }
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error((await response.text()) || `The download failed with ${response.status}.`);
+  }
+  const body = await response.formData();
+  body.append("fleet", JSON.stringify(entry));
+  return postPluginForm(to, body);
 }
