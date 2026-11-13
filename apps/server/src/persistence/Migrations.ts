@@ -8,6 +8,7 @@ import {
 } from "@t3tools/shared/databaseMigrationLog";
 import { reconcileV2PreviewMigration } from "./reconcileV2PreviewMigration.ts";
 
+import { ensureKlinSchema, isKlinSchemaMissing } from "./klinSchema.ts";
 import Migration0001 from "./Migrations/001_OrchestrationEvents.ts";
 import Migration0002 from "./Migrations/002_OrchestrationCommandReceipts.ts";
 import Migration0003 from "./Migrations/003_CheckpointDiffBlobs.ts";
@@ -247,7 +248,8 @@ const assertV2MigrationsCanRun = Effect.fn("assertV2MigrationsCanRun")(function*
 
 const latestMigrationId = Math.max(...migrationEntries.map(([id]) => id));
 
-// Mirrors the Migrator, which runs only ids above the highest recorded, plus the V2-preview reconciliation.
+// Mirrors the Migrator, which runs only ids above the highest recorded, plus the V2-preview reconciliation
+// and Klin's schema.
 export const hasPendingMigrations = Effect.fn("hasPendingMigrations")(function* () {
   const sql = yield* SqlClient.SqlClient;
   const tables = yield* sql`
@@ -261,7 +263,11 @@ export const hasPendingMigrations = Effect.fn("hasPendingMigrations")(function* 
     FROM effect_sql_migrations
   `;
   const row = rows[0];
-  return (row?.latestId ?? 0) < latestMigrationId || (row?.previewRows ?? 0) > 0;
+  return (
+    (row?.latestId ?? 0) < latestMigrationId ||
+    (row?.previewRows ?? 0) > 0 ||
+    (yield* isKlinSchemaMissing())
+  );
 });
 
 const run = Migrator.make({});
@@ -311,6 +317,10 @@ export const runMigrations = Effect.fn("runMigrations")(function* ({
     executedMigrations.push(...(yield* run({ loader: makeMigrationLoader(id) })));
   }
   const migrations = executedMigrations.map(([id, name]) => `${id}_${name}`);
+  if (toMigrationInclusive === undefined && (yield* isKlinSchemaMissing())) {
+    yield* ensureKlinSchema();
+    migrations.push("KlinSchema");
+  }
   yield* migrations.length === 0
     ? Effect.logDebug("Database schema is current")
     : Effect.log(DATABASE_MIGRATIONS_FINISHED_MESSAGE).pipe(Effect.annotateLogs({ migrations }));

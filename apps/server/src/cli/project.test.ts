@@ -11,6 +11,7 @@ import { assert, it } from "@effect/vitest";
 import {
   CommandId,
   EventId,
+  PROJECT_TRACKED_FOLDERS_MAX,
   ProviderInstanceId,
   ThreadId,
   type OrchestrationV2AppThread,
@@ -114,24 +115,62 @@ const readProjects = (baseDir: string) =>
     );
   });
 
-it.effect("adds, renames, and removes projects through the V2 project CLI domain", () =>
-  Effect.gen(function* () {
-    const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-v2-project-cli-"));
-    const workspaceRoot = NodeFS.mkdtempSync(
-      NodePath.join(NodeOS.tmpdir(), "t3-v2-project-workspace-"),
-    );
+it.effect(
+  "adds, renames, and removes projects, and tracks folders on add, through the V2 project CLI domain",
+  () =>
+    Effect.gen(function* () {
+      const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-v2-project-cli-"));
+      const workspaceRoot = NodeFS.mkdtempSync(
+        NodePath.join(NodeOS.tmpdir(), "t3-v2-project-workspace-"),
+      );
 
-    yield* runCli(["project", "add", workspaceRoot, "--title", "Alpha", "--base-dir", baseDir]);
-    const added = (yield* readProjects(baseDir)).projects[0];
-    assert.equal(added?.title, "Alpha");
-    assert.equal(added?.workspaceRoot, workspaceRoot);
+      yield* runCli(["project", "add", workspaceRoot, "--title", "Alpha", "--base-dir", baseDir]);
+      const added = (yield* readProjects(baseDir)).projects[0];
+      assert.equal(added?.title, "Alpha");
+      assert.equal(added?.workspaceRoot, workspaceRoot);
 
-    yield* runCli(["project", "rename", workspaceRoot, "Beta", "--base-dir", baseDir]);
-    assert.equal((yield* readProjects(baseDir)).projects[0]?.title, "Beta");
+      yield* runCli(["project", "rename", workspaceRoot, "Beta", "--base-dir", baseDir]);
+      assert.equal((yield* readProjects(baseDir)).projects[0]?.title, "Beta");
 
-    yield* runCli(["project", "remove", added?.id ?? "", "--base-dir", baseDir]);
-    assert.deepEqual((yield* readProjects(baseDir)).projects, []);
-  }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+      yield* runCli(["project", "remove", added?.id ?? "", "--base-dir", baseDir]);
+      assert.deepEqual((yield* readProjects(baseDir)).projects, []);
+
+      const tooMany = Array.from({ length: PROJECT_TRACKED_FOLDERS_MAX + 1 }, (_, index) => [
+        "--track",
+        NodePath.join(NodeOS.tmpdir(), `t3-v2-project-track-${index}`),
+      ]).flat();
+      const refused = yield* runCli([
+        "project",
+        "add",
+        workspaceRoot,
+        ...tooMany,
+        "--base-dir",
+        baseDir,
+      ]).pipe(Effect.flip);
+      assert.include(refused.message, `at most ${PROJECT_TRACKED_FOLDERS_MAX} folders`);
+      assert.deepEqual((yield* readProjects(baseDir)).projects, []);
+
+      // A script cannot answer the app's checklist, so the flags track what it would offer.
+      const shared = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-v2-project-shared-"));
+      NodeFS.mkdirSync(NodePath.join(workspaceRoot, "api", ".git"), { recursive: true });
+      NodeFS.mkdirSync(NodePath.join(workspaceRoot, "notes"));
+      yield* runCli([
+        "project",
+        "add",
+        workspaceRoot,
+        "--track-repos",
+        "--track",
+        `${shared}${NodePath.sep}`,
+        "--track",
+        NodePath.join(workspaceRoot, "api"),
+        "--base-dir",
+        baseDir,
+      ]);
+      assert.deepEqual((yield* readProjects(baseDir)).projects[0]?.trackedFolders, [
+        { path: shared, name: NodePath.basename(shared) },
+        { path: NodePath.join(workspaceRoot, "api"), name: "api" },
+      ]);
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 it.effect.each(["snapshot", "mutation"] as const)(

@@ -3,6 +3,7 @@ import type { EnvironmentId, PluginState } from "@t3tools/contracts";
 import { ChevronUpIcon, RotateCwIcon, SlidersHorizontalIcon, Trash2Icon } from "lucide-react";
 import { useState } from "react";
 
+import { fleetMachinesAtom } from "../../../plugins/pluginFleet";
 import {
   pluginContributionKey,
   pluginPartNotesAtom,
@@ -16,6 +17,7 @@ import { Collapsible, CollapsiblePanel } from "../../ui/collapsible";
 import { Popover, PopoverClose, PopoverPopup, PopoverTrigger } from "../../ui/popover";
 import { Switch } from "../../ui/switch";
 import { SettingsRow } from "../settingsLayout";
+import { PluginPlacements } from "./PluginFleet";
 import { PluginSettingsRows } from "./PluginSettingsRows";
 
 const FAILURE_STAGES = {
@@ -40,6 +42,7 @@ export function PluginRow({
   const setEnabled = useAtomCommand(pluginEnvironment.setPluginEnabled, "plugin enabled");
   const reload = useAtomCommand(pluginEnvironment.reloadPlugin, "plugin reload");
   const uninstall = useAtomCommand(pluginEnvironment.uninstallPlugin, "plugin removal");
+  const keepOff = useAtomCommand(pluginEnvironment.setPluginKeptOff, "plugin removal");
   const [busy, setBusy] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const customSettings = useAtomValue(
@@ -48,6 +51,9 @@ export function PluginRow({
   const webFailure = useAtomValue(pluginWebFailuresAtom(plugin.id)).get(environmentId);
   const partNotes = useAtomValue(pluginPartNotesAtom(plugin.id)).get(environmentId) ?? [];
   const hasSettings = customSettings !== undefined || plugin.hasSettings;
+  const shared =
+    useAtomValue(fleetMachinesAtom).find((machine) => machine.environmentId === environmentId)
+      ?.status.kind === "sharing";
   const whileBusy = async (action: () => Promise<unknown>) => {
     setBusy(true);
     await action();
@@ -92,6 +98,7 @@ export function PluginRow({
               {note}
             </span>
           ))}
+          <PluginPlacements environmentId={environmentId} plugin={plugin} />
         </>
       }
       status={
@@ -136,11 +143,17 @@ export function PluginRow({
           {duplicate ? null : (
             <RemovePluginPopover
               name={plugin.name}
+              shared={shared}
               unlink={unlink}
               folder={unlink ? folder : undefined}
               disabled={busy || !canManage}
               onRemove={() =>
                 whileBusy(() => uninstall({ environmentId, input: { pluginId: plugin.id } }))
+              }
+              onRemoveHereOnly={() =>
+                whileBusy(() =>
+                  keepOff({ environmentId, input: { pluginId: plugin.id, keptOff: true } }),
+                )
               }
             />
           )}
@@ -181,17 +194,23 @@ export function PluginRow({
 /** The remove button and the popup that confirms it, or Unlink for a plugin loaded from a folder. */
 function RemovePluginPopover({
   name,
+  shared,
   unlink,
   folder,
   disabled,
   onRemove,
+  onRemoveHereOnly,
 }: {
   readonly name: string;
+  /** Whether this machine shares plugins, so the removal reaches the user's other machines. */
+  readonly shared: boolean;
   readonly unlink: boolean;
   /** The folder unlinked, named in the popup. */
   readonly folder: string | undefined;
   readonly disabled: boolean;
   readonly onRemove: () => Promise<unknown>;
+  /** Keeps it off this machine only; the user's other machines keep it. */
+  readonly onRemoveHereOnly: () => Promise<unknown>;
 }) {
   const label = unlink ? "Unlink" : "Remove";
   return (
@@ -216,19 +235,31 @@ function RemovePluginPopover({
             </p>
           )}
           <p className="text-muted-foreground text-xs">
-            This also deletes its settings, secrets and stored data, and can't be undone.
+            {shared
+              ? "Removing it everywhere also removes it from every machine that shares plugins, with its settings, secrets and stored data on each. Removing it here only keeps it on the others, and its row there can add it back. Neither can be undone for its data."
+              : "This also deletes its settings, secrets and stored data, and can't be undone."}
           </p>
-          <div className="flex justify-end gap-2">
+          <div className="flex flex-wrap justify-end gap-2">
             <PopoverClose render={<Button size="sm" variant="ghost" disabled={disabled} />}>
               Cancel
             </PopoverClose>
+            {shared ? (
+              <Button
+                size="sm"
+                variant="destructive-outline"
+                disabled={disabled}
+                onClick={() => void onRemoveHereOnly()}
+              >
+                {label} here only
+              </Button>
+            ) : null}
             <Button
               size="sm"
               variant="destructive"
               disabled={disabled}
               onClick={() => void onRemove()}
             >
-              {label} {name}
+              {label} {shared ? "everywhere" : name}
             </Button>
           </div>
         </div>

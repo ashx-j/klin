@@ -17,6 +17,7 @@ import {
   InstallProblems,
   usePluginInstaller,
 } from "./PluginInstallControls";
+import { PluginSharingRow } from "./PluginFleet";
 import { PluginList } from "./PluginList";
 import { runsPlugins } from "./pluginTargets";
 import { PluginUiEnvironmentRow } from "./PluginUiEnvironmentRow";
@@ -132,6 +133,7 @@ function PluginsPage({ environment }: { readonly environment: EnvironmentPresent
                 <InstallProblems problems={installer.problems} />
               ) : null}
             </SettingsRow>
+            <PluginSharingRow environmentId={environment.environmentId} />
             <PluginUiEnvironmentRow />
           </PluginList>
         ) : (
