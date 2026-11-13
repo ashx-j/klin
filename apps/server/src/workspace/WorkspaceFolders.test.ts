@@ -1,6 +1,10 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
-import { ProjectId, type ProjectTrackedFolder } from "@t3tools/contracts";
+import {
+  PROJECT_TRACKED_FOLDERS_MAX,
+  ProjectId,
+  type ProjectTrackedFolder,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -79,6 +83,11 @@ it.layer(NodeServices.layer)("WorkspaceFolders", (it) => {
         path.join(root, ".gitmodules"),
         '[submodule "sub"]\n\tpath = sub\n\turl = https://example.test/sub.git\n',
       );
+      // Missing folders never use up the limit.
+      const gone = Array.from(
+        { length: PROJECT_TRACKED_FOLDERS_MAX },
+        (_, index) => `{ "path": "gone-${index}" },`,
+      ).join("\n");
       yield* fileSystem.writeFileString(
         path.join(root, "team.code-workspace"),
         `{
@@ -87,7 +96,7 @@ it.layer(NodeServices.layer)("WorkspaceFolders", (it) => {
             { "path": "api", "name": "API" },
             { "path": "notes" },
             { "path": "../outside" },
-            { "path": "gone" },
+            ${gone}
             { "path": "." },
           ],
         }`,

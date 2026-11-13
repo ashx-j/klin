@@ -195,7 +195,7 @@ export const scanFolders = Effect.fn("WorkspaceFolders.scan")(function* (
       : [folder];
   });
   const folders = yield* Effect.forEach(
-    candidates.slice(0, PROJECT_TRACKED_FOLDERS_MAX),
+    candidates,
     (folder) =>
       classify(folder).pipe(
         Effect.map((classified) =>
@@ -211,7 +211,7 @@ export const scanFolders = Effect.fn("WorkspaceFolders.scan")(function* (
     isGitRepository: yield* exists(path.join(root, ".git")),
     codeWorkspaceFile:
       listed === null || codeWorkspaceFile === null ? null : path.join(root, codeWorkspaceFile),
-    folders: folders.flat(),
+    folders: folders.flat().slice(0, PROJECT_TRACKED_FOLDERS_MAX),
   };
 });
 
