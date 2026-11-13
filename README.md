@@ -2,9 +2,23 @@
 
 Klin is a personal fork of [T3 Code](https://github.com/pingdotgg/t3code), a desktop and web app for running coding agents on your machine. It works with your existing Claude Code, Codex, Cursor, Grok Build, OpenCode, Antigravity and fx subscriptions.
 
-Klin merges T3 Code's release and nightly tags, never arbitrary upstream `main`, and adds features that upstream doesn't ship. It has no mobile app.
+Klin merges T3 Code's release and nightly tags, never arbitrary upstream `main`, and adds features that upstream doesn't ship. It has no mobile app of its own. T3 Code's phone app reaches Klin servers through T3 Connect.
 
-Klin has no installers yet. Run it from source.
+Each push to `main` publishes a Windows installer and a Linux server archive on the [releases page](https://github.com/ashx-j/klin/releases). You can also run Klin from source.
+
+## Using Klin from T3 Code's phone app
+
+On a Linux machine, download the newest server archive and run its `connect` command:
+
+```bash
+gh release download --repo ashx-j/klin --pattern 't3-*-linux-x64.tar.gz' --dir ~/klin-setup
+cd ~/klin-setup && tar -xzf t3-*-linux-x64.tar.gz
+./t3-*-linux-x64/t3 connect
+```
+
+It signs in to T3 Connect with your T3 account and runs Klin as the `klin.service` user service, with its data in `~/.klin`. Over SSH it prints a link and a code to approve on any device. In T3 Code's phone app, the machine appears as "<machine name> (Klin)", next to any T3 Code server on the same machine. Each machine with T3 Connect counts toward your T3 account's machine limit.
+
+For the Windows desktop app, run `klin connect link` in a terminal, then restart Klin. Settings can put the `klin` command on your PATH. T3 Connect accepts in-app sign-in only from T3 Code's own desktop app, so Klin has none.
 
 ## Running from source
 

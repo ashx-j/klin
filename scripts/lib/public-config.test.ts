@@ -51,6 +51,24 @@ describe("loadRepoEnv", () => {
       VITE_T3CODE_RELAY_URL: "https://ci.example.test",
     });
   });
+
+  it("falls back to .env.example's T3 Connect config only when asked, below .env", () => {
+    const repoRoot = makeTemporaryDirectory();
+    NodeFS.writeFileSync(
+      NodePath.join(repoRoot, ".env.example"),
+      "T3CODE_CLERK_PUBLISHABLE_KEY=pk_example\nT3CODE_RELAY_URL=https://example.test\nT3CODE_MOBILE_OTLP_TRACES_TOKEN=token_example\n",
+    );
+    NodeFS.writeFileSync(NodePath.join(repoRoot, ".env"), "T3CODE_RELAY_URL=https://root.test\n");
+
+    expect(loadRepoEnv({ baseEnv: {}, repoRoot }).T3CODE_CLERK_PUBLISHABLE_KEY).toBeUndefined();
+    const env = loadRepoEnv({ baseEnv: {}, repoRoot, connectFromExample: true });
+    expect(env).toMatchObject({
+      T3CODE_CLERK_PUBLISHABLE_KEY: "pk_example",
+      VITE_CLERK_PUBLISHABLE_KEY: "pk_example",
+      T3CODE_RELAY_URL: "https://root.test",
+    });
+    expect(env.T3CODE_MOBILE_OTLP_TRACES_TOKEN).toBeUndefined();
+  });
 });
 
 function makeTemporaryDirectory() {

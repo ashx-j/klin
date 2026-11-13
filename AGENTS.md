@@ -8,6 +8,8 @@ Klin is Ash's fork of [T3 Code](https://github.com/pingdotgg/t3code), a minimal 
 
 Klin installs next to T3 Code on the same machines, so it never shares T3 Code's name, app ID, home folder (`~/.klin`, not `~/.t3`), port, URL scheme, systemd units, or release feed. Those values live in `packages/shared/src/appIdentity.ts`. When an upstream merge adds a literal such as `".t3"`, `3773`, `t3code://`, `com.t3tools.t3code`, `t3code.service`, or `pingdotgg/t3code` releases, import it from that module instead.
 
+Klin's servers sign in to T3 Connect, T3's relay, so T3 Code's phone app reaches them. Release builds and `vp run dev` read its public identifiers from upstream's `.env.example`. The phone app speaks upstream's wire format to Klin servers, so keep `ORCHESTRATION_PROTOCOL_VERSION`, contracts and RPCs as upstream has them and only add to them. Klin's version sorts above the upstream release it contains; `klin-release.yml` says why.
+
 You can think of T3 Code as an open source "bring-your-own-subscription" alternative to apps like Claude Desktop, Codex App, Cursor Glass and Conductor.
 
 ## What makes T3 Code special?

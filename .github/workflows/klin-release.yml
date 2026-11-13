@@ -4,7 +4,8 @@
 # https://github.com/ashx-j/klin/releases/latest/download/Klin-Setup-x64.exe
 #
 # This replaces upstream T3 Code's release.yml and release-desktop.yml, which need T3's paid
-# runners, signing secrets and T3 Connect config. It keeps their build steps for these two targets.
+# runners and signing secrets. It keeps their build steps for these two targets, and like upstream's
+# preview builds it takes T3 Connect's public sign-in and relay identifiers from .env.example.
 # Pull requests that touch the release build or the desktop app run everything except the publish.
 name: Release
 
@@ -14,6 +15,7 @@ on:
       - main
   pull_request:
     paths:
+      - .env.example
       - .github/workflows/klin-release.yml
       - .github/actions/setup-ci-deps/**
       - packages/shared/src/appIdentity.ts
@@ -45,9 +47,11 @@ jobs:
         with:
           fetch-depth: 0
 
-      # <newest merged upstream release>-klin.<run number>. T3 Code never uses a "klin"
-      # prerelease, so no Klin version can name a T3 Code release. The run number only grows
-      # while this file keeps its name.
+      # <newest merged upstream release, next patch>-klin.<run number>, so Klin sorts above every
+      # T3 Code release it contains and below the next one. T3's phone app offers a server an
+      # update when T3's newest release sorts above the server's version. T3 Code never uses a
+      # "klin" prerelease, so no Klin version can name a T3 Code release. The run number only
+      # grows while this file keeps its name.
       - name: Resolve version
         id: version
         shell: bash
@@ -65,9 +69,24 @@ jobs:
           if [[ -z "$base" ]]; then
             base="$(node -p 'require("./apps/server/package.json").version.split("-")[0]')"
           fi
-          version="${base}-klin.${GITHUB_RUN_NUMBER}"
+          version="${base%.*}.$(( ${base##*.} + 1 ))-klin.${GITHUB_RUN_NUMBER}"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "Building Klin $version"
+
+      # The same public identifiers upstream builds into its own releases. Reading them here, not
+      # copying them, lets an upstream merge that changes them reach Klin's next build.
+      - name: Read T3 Connect's public config
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in CLERK_PUBLISHABLE_KEY CLERK_JWT_TEMPLATE CLERK_CLI_OAUTH_CLIENT_ID RELAY_URL; do
+            value="$(sed -n "s|^T3CODE_${name}=||p" .env.example)"
+            if [[ -z "$value" ]]; then
+              echo "::error::.env.example has no T3CODE_${name}"
+              exit 1
+            fi
+            echo "T3CODE_${name}=$value" >> "$GITHUB_ENV"
+          done
 
       - name: Install build libraries
         run: |

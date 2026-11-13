@@ -21,16 +21,30 @@ type Environment = Readonly<Record<string, string | undefined>>;
 
 const REPO_ROOT = NodePath.resolve(NodeURL.fileURLToPath(import.meta.url), "../../..");
 
+const CONNECT_CONFIG_NAMES = [
+  "T3CODE_CLERK_PUBLISHABLE_KEY",
+  "T3CODE_CLERK_JWT_TEMPLATE",
+  "T3CODE_CLERK_CLI_OAUTH_CLIENT_ID",
+  "T3CODE_RELAY_URL",
+] as const;
+
 export function loadRepoEnv({
   baseEnv = process.env,
   repoRoot = REPO_ROOT,
+  connectFromExample = false,
 }: {
   readonly baseEnv?: Environment;
   readonly repoRoot?: string;
+  /** Klin's dev servers: T3 Connect's production identifiers from `.env.example`, below every other source. */
+  readonly connectFromExample?: boolean;
 } = {}): Record<string, string | undefined> {
   const rootEnv = readEnvFile(NodePath.join(repoRoot, ".env"));
   const localEnv = readEnvFile(NodePath.join(repoRoot, ".env.local"));
-  const config = resolvePublicConfig(baseEnv, localEnv, rootEnv);
+  const exampleEnv = connectFromExample ? readEnvFile(NodePath.join(repoRoot, ".env.example")) : {};
+  const connectExample = Object.fromEntries(
+    CONNECT_CONFIG_NAMES.map((name) => [name, exampleEnv[name]]),
+  );
+  const config = resolvePublicConfig(baseEnv, localEnv, rootEnv, connectExample);
 
   return {
     ...rootEnv,

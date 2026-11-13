@@ -1,3 +1,4 @@
+import { DESKTOP_CONNECT_SIGN_IN } from "@t3tools/shared/appIdentity";
 import {
   clerkFrontendApiHostnameFromPublishableKey,
   relayClerkTokenOptions,
@@ -83,11 +84,10 @@ export function hasCloudPublicConfig(): boolean {
   }
 
   // Electron has its own auth runtime; development keys also support private browser origins.
-  if (
-    typeof window === "undefined" ||
-    window.desktopBridge !== undefined ||
-    !config.clerkPublishableKey.startsWith("pk_live_")
-  ) {
+  if (typeof window !== "undefined" && window.desktopBridge !== undefined) {
+    return DESKTOP_CONNECT_SIGN_IN;
+  }
+  if (typeof window === "undefined" || !config.clerkPublishableKey.startsWith("pk_live_")) {
     return true;
   }
 

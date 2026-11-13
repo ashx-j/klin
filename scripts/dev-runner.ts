@@ -24,7 +24,7 @@ import { defaultDevMemoryLimitBytes, enforceDevMemoryLimit } from "./lib/dev-mem
 import { type DevShareError, shareDevServer, unshareDevServer } from "./lib/dev-share.ts";
 import { loadRepoEnv } from "./lib/public-config.ts";
 
-Object.assign(process.env, loadRepoEnv());
+Object.assign(process.env, loadRepoEnv({ connectFromExample: true }));
 
 const BASE_SERVER_PORT = 13773;
 const BASE_WEB_PORT = 5733;
