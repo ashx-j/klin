@@ -918,9 +918,12 @@ const make = Effect.gen(function* () {
         project.trackedFolders.map((folder) => path.resolve(folder.path)),
         isRepository,
       );
-      yield* linkFolder(taskFolder.projectRoot, taskFolder.projectPath, tracked).pipe(
-        Effect.mapError(restoreFailed),
-      );
+      // Also those the project stopped tracking: a link to one would pass for its missing worktree.
+      const recorded = taskFolder.repositories.map((repository) => repository.repositoryPath);
+      yield* linkFolder(taskFolder.projectRoot, taskFolder.projectPath, [
+        ...tracked,
+        ...recorded,
+      ]).pipe(Effect.mapError(restoreFailed));
     }
     for (const repository of taskFolder.repositories.toSorted(
       (left, right) => depth(left.worktreePath) - depth(right.worktreePath),

@@ -481,6 +481,37 @@ it.live("adds a repository to an existing task folder on the thread's branch", (
   ),
 );
 
+it.live("puts a task folder back with a worktree for every repository it recorded", () =>
+  withState((state) =>
+    Effect.gen(function* () {
+      const { path, tmp, run, repository, isLink } = yield* fixture;
+      const taskFolders = yield* TaskFolders.TaskFolders;
+      const api = yield* repository("shop/services/api");
+      state.workspaceRoot = path.join(tmp, "shop");
+      state.trackedFolders = tracked(api);
+      const { taskFolder } = yield* create("feature");
+      const root = taskFolder.root;
+      const restore = taskFolders.restore({
+        taskFolder,
+        recreate: (checkout) =>
+          run(checkout.repositoryPath, "worktree", "add", checkout.worktreePath, "feature"),
+      });
+
+      // Cleanup keeps the record of a folder it removes; the project then stops tracking `api`.
+      yield* taskFolders.remove({ root, force: true, forget: false });
+      state.trackedFolders = [];
+      yield* restore;
+
+      assert.isFalse(yield* isLink(path.join(root, "services")));
+      assert.equal(
+        yield* run(path.join(root, "services", "api"), "symbolic-ref", "--short", "HEAD"),
+        "feature",
+      );
+      assert.equal(yield* run(api, "symbolic-ref", "--short", "HEAD"), "main");
+    }),
+  ),
+);
+
 it.live("keeps a repository git will not remove and removes the rest", () =>
   withState((state) =>
     Effect.gen(function* () {
