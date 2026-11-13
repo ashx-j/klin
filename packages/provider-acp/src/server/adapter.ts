@@ -456,11 +456,11 @@ export interface AcpAdapterV2Flavor {
   readonly clientFileSystem?: {
     readonly readTextFile: (
       request: EffectAcpSchema.ReadTextFileRequest,
-      cwd: string | null,
+      policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
     ) => Effect.Effect<EffectAcpSchema.ReadTextFileResponse, EffectAcpErrors.AcpError>;
     readonly writeTextFile?: (
       request: EffectAcpSchema.WriteTextFileRequest,
-      cwd: string | null,
+      policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
     ) => Effect.Effect<EffectAcpSchema.WriteTextFileResponse, EffectAcpErrors.AcpError>;
   };
   readonly extractPermissionQuestion?: (request: EffectAcpSchema.RequestPermissionRequest) =>
@@ -6633,14 +6633,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           if (clientFileSystem !== undefined) {
             yield* targetRuntime.handleReadTextFile((request) =>
               clientPolicyContext.pipe(
-                Effect.flatMap(({ policy }) => clientFileSystem.readTextFile(request, policy.cwd)),
+                Effect.flatMap(({ policy }) => clientFileSystem.readTextFile(request, policy)),
               ),
             );
             const writeTextFile = clientFileSystem.writeTextFile;
             if (writeTextFile !== undefined) {
               yield* targetRuntime.handleWriteTextFile((request) =>
                 clientPolicyContext.pipe(
-                  Effect.flatMap(({ policy }) => writeTextFile(request, policy.cwd)),
+                  Effect.flatMap(({ policy }) => writeTextFile(request, policy)),
                 ),
               );
             }

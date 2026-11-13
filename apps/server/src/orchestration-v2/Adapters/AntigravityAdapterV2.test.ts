@@ -330,6 +330,11 @@ describe("AntigravityAdapterV2 client file system", () => {
       });
       const outsideFile = path.join(outside, "secret.txt");
       yield* fileSystem.writeFileString(outsideFile, "secret");
+      const tracked = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-antigravity-tracked-",
+      });
+      const trackedFile = path.join(tracked, "api.ts");
+      yield* fileSystem.writeFileString(trackedFile, "tracked");
       const attachment = path.join(host.paths.attachmentsDir, "pasted.txt");
       yield* fileSystem.writeFileString(attachment, "pasted");
 
@@ -338,6 +343,10 @@ describe("AntigravityAdapterV2 client file system", () => {
         runtimeMode: "full-access",
         interactionMode: "default",
         cwd: workspace,
+        workspace: {
+          folders: [{ name: "api", path: tracked, isGitRepository: false }],
+          extraRoots: [tracked],
+        },
       });
       const modelSelection = { instanceId, model: "gemini-test-low" } as const;
       const session = yield* adapter.openSession({
@@ -377,6 +386,11 @@ describe("AntigravityAdapterV2 client file system", () => {
         context("fs/read_text_file"),
       );
       assert.equal(pasted.content, "pasted");
+      const trackedRead = yield* readTextFile(
+        { sessionId: "mock-session-1", path: trackedFile },
+        context("fs/read_text_file"),
+      );
+      assert.equal(trackedRead.content, "tracked", "a tracked folder outside the cwd is readable");
       yield* fileSystem.writeFileString(insidePath, "\uFEFFfirst\né中🙂\nlast");
       const sliced = yield* readTextFile(
         { sessionId: "mock-session-1", path: insidePath, line: 2, limit: 1 },
