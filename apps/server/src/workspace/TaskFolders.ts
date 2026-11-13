@@ -21,7 +21,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
-import type * as PlatformError from "effect/PlatformError";
+import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 
 import * as ServerConfig from "../config.ts";
@@ -178,6 +178,44 @@ export const commonAncestor = (
     ancestor = parent;
   }
 };
+
+/**
+ * Runs `effect` with what is at `target` moved aside: deleted once `effect` succeeds and put back
+ * when it fails. For a checkout made where a failed removal left files.
+ */
+export const whileSetAside = <A, E, R>(
+  fileSystem: FileSystem.FileSystem,
+  path: Path.Path,
+  target: string,
+  effect: Effect.Effect<A, E, R>,
+) =>
+  Effect.acquireUseRelease(
+    Effect.gen(function* () {
+      const aside = yield* fileSystem.makeTempDirectory({
+        directory: path.dirname(target),
+        prefix: ".t3-replaced-",
+      });
+      yield* fileSystem.rename(target, path.join(aside, "folder"));
+      return aside;
+    }),
+    () => effect,
+    (aside, exit) =>
+      (Exit.isSuccess(exit)
+        ? Effect.void
+        : fileSystem
+            .remove(target, { recursive: true, force: true })
+            .pipe(Effect.andThen(fileSystem.rename(path.join(aside, "folder"), target)))
+      ).pipe(
+        Effect.andThen(fileSystem.remove(aside, { recursive: true, force: true })),
+        Effect.catchCause((cause) =>
+          Effect.logWarning("A folder replaced by a checkout was left set aside", {
+            target,
+            setAside: path.join(aside, "folder"),
+            cause,
+          }),
+        ),
+      ),
+  );
 
 const failureDetail = (cause: unknown) =>
   typeof cause === "object" &&
@@ -946,7 +984,23 @@ const make = Effect.gen(function* () {
       yield* fileSystem
         .makeDirectory(path.dirname(checkout.worktreePath), { recursive: true })
         .pipe(Effect.mapError(restoreFailed));
-      yield* recreate(checkout);
+      // Files a failed removal left, unless they hold another checkout that is still there.
+      const leftover =
+        (yield* exists(checkout.worktreePath)) &&
+        (yield* Effect.filter(
+          taskFolder.repositories.filter(
+            (other) =>
+              other.worktreePath !== checkout.worktreePath &&
+              isWithinRoot(path, other.worktreePath, checkout.worktreePath),
+          ),
+          (other) => isRepository(other.worktreePath),
+        )).length === 0;
+      if (!leftover) return yield* recreate(checkout);
+      yield* whileSetAside(fileSystem, path, checkout.worktreePath, recreate(checkout)).pipe(
+        Effect.mapError((error) =>
+          PlatformError.isPlatformError(error) ? restoreFailed(error) : error,
+        ),
+      );
     });
     if (taskFolder.projectIsWorktree) {
       yield* recreateMissing({

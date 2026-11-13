@@ -647,8 +647,20 @@ it.live("puts a task folder back with a worktree for every repository it recorde
       // Cleanup keeps the record of a folder it removes; the project then stops tracking `api`.
       yield* taskFolders.remove({ root, force: true, forget: false });
       state.trackedFolders = tracked(web);
+      // A removal that failed partway leaves files where a checkout was.
+      yield* fileSystem.makeDirectory(path.join(root, "web", "dist"), { recursive: true });
+      yield* fileSystem.writeFileString(path.join(root, "web", "dist", "app.js"), "built\n");
       yield* restore;
 
+      assert.equal(
+        yield* run(path.join(root, "web"), "symbolic-ref", "--short", "HEAD"),
+        "feature",
+      );
+      assert.isFalse(yield* fileSystem.exists(path.join(root, "web", "dist")));
+      assert.deepEqual(
+        (yield* fileSystem.readDirectory(root)).filter((name) => name.startsWith(".t3-")),
+        [],
+      );
       assert.isFalse(yield* isLink(path.join(root, "services")));
       assert.equal(
         yield* run(path.join(root, "services", "api"), "symbolic-ref", "--short", "HEAD"),
