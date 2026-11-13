@@ -441,9 +441,23 @@ const make = Effect.gen(function* () {
       path.basename(taskPlan.anchor) || "workspace",
       `${prefix}-${Hex.encode(hash).slice(0, 16)}`,
     );
-    let root = base;
-    for (let suffix = 2; yield* exists(root); suffix++) root = `${base}-${suffix}`;
-    return root;
+    const reserveFailed = fail("create", "Could not create the task folder");
+    yield* fileSystem
+      .makeDirectory(path.dirname(base), { recursive: true })
+      .pipe(Effect.mapError(reserveFailed));
+    // Made, not only checked: of two creations that pick one name, the second takes the next.
+    for (let suffix = 1; ; suffix++) {
+      const root = suffix === 1 ? base : `${base}-${suffix}`;
+      const reserved = yield* fileSystem.makeDirectory(root).pipe(
+        Effect.as(true),
+        Effect.catchIf(
+          (error) => error.reason._tag === "AlreadyExists",
+          () => Effect.succeed(false),
+        ),
+        Effect.mapError(reserveFailed),
+      );
+      if (reserved) return root;
+    }
   });
 
   const removeCheckout = Effect.fnUntraced(function* (
@@ -621,7 +635,6 @@ const make = Effect.gen(function* () {
       const created: TaskFolderRepository[] = [];
       const current = (): TaskFolder => ({ ...empty, repositories: [...created] });
       return yield* Effect.gen(function* () {
-        yield* fileSystem.makeDirectory(root, { recursive: true });
         // Recorded before any checkout, so an interrupted creation is still found and removed.
         yield* store.put(empty);
         if (input.onClaimed !== undefined) yield* input.onClaimed(empty, branch);

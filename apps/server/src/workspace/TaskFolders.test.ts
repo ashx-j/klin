@@ -22,8 +22,18 @@ import {
 
 const threadId = ThreadId.make("thread:task-folders");
 
-const layerFor = (state: TaskFoldersTestState) =>
+/** `fileSystem` wraps the one the service uses; the test's own stays real. */
+const layerFor = (
+  state: TaskFoldersTestState,
+  fileSystem: (real: FileSystem.FileSystem) => FileSystem.FileSystem = (real) => real,
+) =>
   layerTaskFoldersWithGit(state).pipe(
+    Layer.provide(
+      Layer.effect(
+        FileSystem.FileSystem,
+        Effect.map(Effect.service(FileSystem.FileSystem), fileSystem),
+      ),
+    ),
     Layer.provideMerge(
       GitVcsDriver.layer.pipe(
         Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-task-folders-" })),
@@ -86,9 +96,10 @@ const withState = <A, E>(
   test: (
     state: TaskFoldersTestState,
   ) => Effect.Effect<A, E, Layer.Success<ReturnType<typeof layerFor>> | Scope.Scope>,
+  fileSystem?: Parameters<typeof layerFor>[1],
 ) => {
   const state: TaskFoldersTestState = { workspaceRoot: "/unset", trackedFolders: [], thread: null };
-  return test(state).pipe(Effect.provide(layerFor(state)), Effect.scoped);
+  return test(state).pipe(Effect.provide(layerFor(state, fileSystem)), Effect.scoped);
 };
 
 it.live("lays a plain wrapper out as links around its repositories' worktrees", () =>
@@ -290,6 +301,42 @@ it.live("treats a project folder inside a larger repository as plain", () =>
     }),
   ),
 );
+
+it.live("never shares a folder another creation reserved first", () => {
+  let theirs: string | undefined;
+  // Another creation takes the folder this one picked, just before this one makes it.
+  const racing = (real: FileSystem.FileSystem): FileSystem.FileSystem => ({
+    ...real,
+    makeDirectory: (target, options) =>
+      Effect.suspend(() => {
+        if (theirs !== undefined || !/[\\/]feature-[0-9a-f]{16}$/.test(target))
+          return real.makeDirectory(target, options);
+        theirs = target;
+        return real
+          .makeDirectory(target, { recursive: true })
+          .pipe(
+            Effect.andThen(real.writeFileString(`${target}/theirs.md`, "theirs\n")),
+            Effect.andThen(real.makeDirectory(target, options)),
+          );
+      }),
+  });
+  return withState(
+    (state) =>
+      Effect.gen(function* () {
+        const { fileSystem, path, tmp, repository } = yield* fixture;
+        const api = yield* repository("shop/api");
+        state.workspaceRoot = path.join(tmp, "shop");
+        state.trackedFolders = tracked(api);
+
+        const { taskFolder } = yield* create("feature");
+
+        assert.isDefined(theirs);
+        assert.notEqual(taskFolder.root, theirs);
+        assert.deepEqual(yield* fileSystem.readDirectory(theirs!), ["theirs.md"]);
+      }),
+    racing,
+  );
+});
 
 it.live("gives every repository one branch name when one of them already has it", () =>
   withState((state) =>
