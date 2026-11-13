@@ -741,7 +741,8 @@ it.live("keeps an ignored repository inside a registered submodule", () =>
 it.live("removes a task folder's clean worktrees and keeps the one with uncommitted work", () =>
   runCleanupTest(
     Effect.gen(function* () {
-      const { service, fs, repo, command, setTaskFolders, setThreads } = yield* cleanupFixture();
+      const { service, fs, repo, command, setTaskFolders, setThreads, setSettings, disable } =
+        yield* cleanupFixture();
       const trackedRepository = Effect.fnUntraced(function* (name: string) {
         const folder = `${repo}/dist/${name}`;
         yield* fs.makeDirectory(folder, { recursive: true });
@@ -798,6 +799,29 @@ it.live("removes a task folder's clean worktrees and keeps the one with uncommit
       expect((yield* taskFolders.find(root))?.repositories).toHaveLength(2);
 
       yield* command(`${root}/dist/api`, ["checkout", "--", "tracked.txt"]);
+      // Cleanup turned off after the sweep read its settings removes nothing.
+      setTaskFolders({
+        ...taskFolders,
+        find: (target) => Effect.sync(disable).pipe(Effect.andThen(taskFolders.find(target))),
+      });
+      const turnedOff = yield* service.runNow;
+      expect(turnedOff.entries.filter((entry) => entry.path?.startsWith(root))).toEqual([
+        expect.objectContaining({
+          path: root,
+          outcome: "kept",
+          reason: "Settings changed since check",
+        }),
+      ]);
+      expect(yield* fs.exists(`${root}/dist/api`)).toBe(true);
+      setTaskFolders(taskFolders);
+      setSettings({
+        storageCleanup: {
+          ...DEFAULT_SERVER_SETTINGS.storageCleanup,
+          worktreeAfterDays: 8,
+          worktreeOnDelete: true,
+        },
+      });
+
       const second = yield* service.runNow;
 
       expect(second.entries.filter((entry) => entry.path?.startsWith(root))).toEqual(

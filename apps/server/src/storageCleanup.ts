@@ -1228,6 +1228,19 @@ const make = Effect.gen(function* () {
                     : "no rules apply";
         // Only Git-based rules can make a not-yet-due worktree eligible, so skip Git otherwise.
         if (!eligible && !unchangedApplies && !settings.worktreeOnMerge) return keep(notDueReason);
+        // The user may turn cleanup off or change its rules while a removal waits for the lease.
+        const settingsChanged = Effect.fnUntraced(function* () {
+          const currentSettings = yield* settingsService.getSettings;
+          const current = resolveWorktreeCleanup(currentSettings, thread.projectId);
+          return (
+            currentSettings.autoResumeLimitedThreads !== serverSettings.autoResumeLimitedThreads ||
+            currentSettings.snoozeLimitedThreads !== serverSettings.snoozeLimitedThreads ||
+            Object.keys(settings).some(
+              (key) =>
+                current[key as keyof typeof settings] !== settings[key as keyof typeof settings],
+            )
+          );
+        });
         // Re-read this path's threads and sessions so new activity cancels removal; full per-worktree snapshots take seconds.
         const blockedSinceCheck = Effect.fnUntraced(function* () {
           const latestProjects = yield* projectStore.listShells();
@@ -1331,6 +1344,7 @@ const make = Effect.gen(function* () {
             Effect.gen(function* () {
               const blockedSinceLease = yield* blockedSinceCheck();
               if (blockedSinceLease !== null) return keep(blockedSinceLease);
+              if (yield* settingsChanged()) return keep("settings changed since check");
               // Each checkout passes the checks a single worktree does, or it stays.
               const result = yield* taskFolders.remove({
                 root: taskFolder.root,
@@ -1495,18 +1509,7 @@ const make = Effect.gen(function* () {
               return keep("commit changed since check");
             const finalChanges = yield* localChangesReason(worktreePath, settings);
             if (finalChanges !== null) return keep(finalChanges);
-            const currentSettings = yield* settingsService.getSettings;
-            const current = resolveWorktreeCleanup(currentSettings, thread.projectId);
-            if (
-              currentSettings.autoResumeLimitedThreads !==
-                serverSettings.autoResumeLimitedThreads ||
-              currentSettings.snoozeLimitedThreads !== serverSettings.snoozeLimitedThreads ||
-              Object.keys(settings).some(
-                (key) =>
-                  current[key as keyof typeof settings] !== settings[key as keyof typeof settings],
-              )
-            )
-              return keep("settings changed since check");
+            if (yield* settingsChanged()) return keep("settings changed since check");
             // Clean only untracked files. Ordinary worktrees retain Git's final tracked-edit check.
             if (settings.worktreeKeepWhen === "tracked-changes")
               yield* cleanupGit(worktreePath, ["clean", "-ffdx"], "git clean");
