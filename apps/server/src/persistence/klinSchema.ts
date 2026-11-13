@@ -7,6 +7,19 @@ import * as SqlClient from "effect/sql/SqlClient";
  * refuses to start, so this runs after the numbered migrations and adds only what is missing.
  * When upstream's own migrations for this schema land, guard them during the merge and delete this.
  */
+/** Whether a database lacks Klin's schema, so opening it would change its schema. */
+export const isKlinSchemaMissing = Effect.fn("isKlinSchemaMissing")(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  const rows = yield* sql<{ readonly present: number }>`
+    SELECT
+      (SELECT COUNT(*) FROM pragma_table_info('projection_projects')
+        WHERE name = 'tracked_folders_json')
+      + (SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'task_folders')
+      AS present
+  `;
+  return (rows[0]?.present ?? 0) < 2;
+});
+
 export const ensureKlinSchema = Effect.fn("ensureKlinSchema")(function* () {
   const sql = yield* SqlClient.SqlClient;
   const projectColumns = yield* sql<{ readonly name: string }>`
