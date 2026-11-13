@@ -7,5 +7,12 @@
     "allowJs": true,
     "checkJs": true
   },
-  "include": ["src", "scripts", "fixtures", "examples/*/web.tsx", "examples/*/server.cjs"]
+  "include": [
+    "src",
+    "scripts",
+    "fixtures",
+    "examples/*/web.tsx",
+    "examples/*/*.cjs",
+    "examples/*/*.test.ts"
+  ]
 }

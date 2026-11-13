@@ -51,8 +51,10 @@ import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
+import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
+import * as Equivalence from "effect/Equivalence";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
@@ -179,6 +181,7 @@ function sendPromptWhenIdle<A>(
  * This avoids quadratic output; scheduled flushes can run late under host load.
  */
 const ACP_TEXT_FLUSH_INTERVAL: Duration.Input = "50 millis";
+const sameExtraRoots = Arr.makeEquivalence(Equivalence.String);
 
 // Output of the running prompt. Session metadata and unknown updates do not reset its timeout.
 const ACP_PROMPT_ACTIVITY_UPDATES: ReadonlySet<string> = new Set([
@@ -201,6 +204,7 @@ const ACP_PROMPT_ACTIVITY_UPDATES: ReadonlySet<string> = new Set([
 export interface AcpAdapterV2RuntimeInput {
   readonly cwd: string;
   readonly runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
+  readonly extraRoots?: ReadonlyArray<string>;
   readonly mcpServers: ReadonlyArray<EffectAcpSchema.McpServer>;
   readonly acpMcpServers?: ReadonlyArray<EffectAcpSchema.McpServer>;
   readonly httpMcpServers?: ReadonlyArray<EffectAcpSchema.McpServer>;
@@ -452,11 +456,11 @@ export interface AcpAdapterV2Flavor {
   readonly clientFileSystem?: {
     readonly readTextFile: (
       request: EffectAcpSchema.ReadTextFileRequest,
-      cwd: string | null,
+      policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
     ) => Effect.Effect<EffectAcpSchema.ReadTextFileResponse, EffectAcpErrors.AcpError>;
     readonly writeTextFile?: (
       request: EffectAcpSchema.WriteTextFileRequest,
-      cwd: string | null,
+      policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
     ) => Effect.Effect<EffectAcpSchema.WriteTextFileResponse, EffectAcpErrors.AcpError>;
   };
   readonly extractPermissionQuestion?: (request: EffectAcpSchema.RequestPermissionRequest) =>
@@ -2485,6 +2489,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           return {
             cwd: input.runtimePolicy.cwd ?? process.cwd(),
             runtimePolicy: input.runtimePolicy,
+            ...(latestRuntimePolicy.workspace === undefined
+              ? {}
+              : { extraRoots: latestRuntimePolicy.workspace.extraRoots }),
             mcpServers: mcpContext.servers,
             acpMcpServers: mcpContext.acpServers,
             httpMcpServers: mcpContext.httpServers,
@@ -2583,6 +2590,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         };
         let runtimeScope: Scope.Closeable | undefined;
         let runtime!: AcpSessionRuntime.AcpSessionRuntime["Service"];
+        let runtimeExtraRoots: ReadonlyArray<string> = [];
         let runtimeMcpBridge: AcpMcpOverAcpBridge | undefined;
         yield* Effect.addFinalizer(() =>
           runtimeScope === undefined
@@ -6625,14 +6633,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           if (clientFileSystem !== undefined) {
             yield* targetRuntime.handleReadTextFile((request) =>
               clientPolicyContext.pipe(
-                Effect.flatMap(({ policy }) => clientFileSystem.readTextFile(request, policy.cwd)),
+                Effect.flatMap(({ policy }) => clientFileSystem.readTextFile(request, policy)),
               ),
             );
             const writeTextFile = clientFileSystem.writeTextFile;
             if (writeTextFile !== undefined) {
               yield* targetRuntime.handleWriteTextFile((request) =>
                 clientPolicyContext.pipe(
-                  Effect.flatMap(({ policy }) => writeTextFile(request, policy.cwd)),
+                  Effect.flatMap(({ policy }) => writeTextFile(request, policy)),
                 ),
               );
             }
@@ -7050,10 +7058,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           runtimeMcpBridge = yield* makeRuntimeMcpBridge(mcpContext, runtimeScope);
           const runtimeGeneration = yield* Ref.get(runtimeCallbackGeneration);
           openAgentRequests = new Set();
+          const runtimeInput = makeRuntimeInput(
+            runtimeGeneration,
+            openAgentRequests,
+            mcpContext,
+            resumeSessionId,
+          );
           runtime = yield* flavor
-            .makeRuntime(
-              makeRuntimeInput(runtimeGeneration, openAgentRequests, mcpContext, resumeSessionId),
-            )
+            .makeRuntime(runtimeInput)
             .pipe(
               Effect.provideService(Scope.Scope, runtimeScope),
               Effect.provideService(SecureRandom.SecureRandom, random),
@@ -7061,6 +7073,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               Effect.provideService(AgentScope, agentScope),
               Effect.provideService(AgentScopeThreadId, threadId ?? undefined),
             );
+          runtimeExtraRoots = runtimeInput.extraRoots ?? [];
         });
 
         const startAcpRuntime = Effect.fnUntraced(function* (
@@ -7125,16 +7138,15 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           const startup = Effect.gen(function* () {
             const mcpContext = yield* readMcpContext(threadId);
             replacementMcpBridge = yield* makeRuntimeMcpBridge(mcpContext, replacementScope);
+            const replacementInput = makeRuntimeInput(
+              replacementGeneration,
+              replacementAgentRequests,
+              mcpContext,
+              undefined,
+              handleCandidateTermination,
+            );
             const replacementRuntime = yield* flavor
-              .makeRuntime(
-                makeRuntimeInput(
-                  replacementGeneration,
-                  replacementAgentRequests,
-                  mcpContext,
-                  undefined,
-                  handleCandidateTermination,
-                ),
-              )
+              .makeRuntime(replacementInput)
               .pipe(
                 Effect.provideService(Scope.Scope, replacementScope),
                 Effect.provideService(SecureRandom.SecureRandom, random),
@@ -7147,7 +7159,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             );
             yield* wireAcpRuntimeMcpHandlers(replacementRuntime, replacementMcpBridge);
             const started = yield* replacementRuntime.start();
-            return { replacementRuntime, started };
+            return {
+              replacementRuntime,
+              started,
+              extraRoots: replacementInput.extraRoots ?? [],
+            };
           });
           const replacementExit = yield* Effect.exit(
             (flavor.withRuntimeStartup?.(startup) ?? startup).pipe(
@@ -7191,6 +7207,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   }
                   yield* quarantineNativeTransportAtGeneration(previousGeneration);
                   runtime = replacementExit.value.replacementRuntime;
+                  runtimeExtraRoots = replacementExit.value.extraRoots;
                   runtimeScope = replacementScope;
                   runtimeMcpBridge = replacementMcpBridge;
                   openAgentRequests = replacementAgentRequests;
@@ -7326,6 +7343,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         const canLoadSession = started.initializeResult.agentCapabilities?.loadSession === true;
         const canResumeSession =
           started.initializeResult.agentCapabilities?.sessionCapabilities?.resume != null;
+        const takesExtraRoots =
+          started.initializeResult.agentCapabilities?.sessionCapabilities?.additionalDirectories !=
+          null;
         const supportsImagePrompts = acpSupportsImagePrompts({
           flavorSupportsImagePrompts: flavor.supportsImagePrompts,
           negotiatedImage:
@@ -8202,6 +8222,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           const runtimeInstructions = buildRuntimeInstructions({
             harness: flavor.runtimeHarness ?? driver,
             model: turnInput.modelSelection.model,
+            runtimePolicy: turnInput.runtimePolicy,
             pullRequestLinking:
               sessionSetup === null ||
               flavor.sessionCarriesPullRequestLinking?.(sessionSetup.initializeResult) !== true,
@@ -8252,6 +8273,18 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           return true;
         });
 
+        // An agent gets its folders only when a session is set up, so changed folders need a new
+        // runtime that reloads the session. A restart would end background work, so none may run.
+        const extraRootsNeedRestart = Effect.suspend(() =>
+          !takesExtraRoots ||
+          !(canLoadSession || canResumeSession) ||
+          sameExtraRoots(runtimeExtraRoots, latestRuntimePolicy.workspace?.extraRoots ?? [])
+            ? Effect.succeed(false)
+            : (sessionRuntime.hasPendingBackgroundWork ?? Effect.succeed(false)).pipe(
+                Effect.map((pending) => !pending),
+              ),
+        );
+
         const startTurnUnlocked = Effect.fn("AcpAdapterV2.startTurn")(
           function* (turnInput: ProviderAdapter.ProviderAdapterV2TurnInput) {
             yield* awaitRuntimeTeardown();
@@ -8267,11 +8300,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             // load/resume can invoke client methods; install the incoming policy before activation.
             latestRuntimePolicy = turnInput.runtimePolicy;
             const requestedSessionId = yield* nativeThreadId(driver, turnInput.providerThread);
-            const restartAfterInterrupt = yield* restartRuntimeAfterTeardownIfRequired(
-              turnInput.threadId,
-            );
+            if (yield* extraRootsNeedRestart) yield* Ref.set(runtimeRestartRequired, true);
+            const restarted = yield* restartRuntimeAfterTeardownIfRequired(turnInput.threadId);
             const needsSessionActivation =
-              (yield* Ref.get(activeSessionId)) !== requestedSessionId || restartAfterInterrupt;
+              (yield* Ref.get(activeSessionId)) !== requestedSessionId || restarted;
             if (needsSessionActivation) {
               const activated = yield* activateSession(requestedSessionId, turnInput.threadId);
               yield* Ref.set(activeSessionId, activated.sessionId);

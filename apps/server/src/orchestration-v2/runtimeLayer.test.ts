@@ -65,6 +65,7 @@ import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
+import * as TaskFolderStore from "../workspace/TaskFolderStore.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
 import * as Orchestrator from "./Orchestrator.ts";
@@ -81,12 +82,14 @@ import { PULL_REQUEST_WATCH_WAKE_LIMIT } from "./pullRequestWatch.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
+import { layerNoTaskFolders } from "./ProviderTurnStartService.testkit.ts";
 import * as RuntimeLayer from "./runtimeLayer.ts";
 import { shellStreamItemFromThreadShell } from "./ShellStream.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as ScratchThreadPromotion from "../project/ScratchThreadPromotion.ts";
+import * as ThreadProjectMove from "../project/ThreadProjectMove.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
@@ -126,10 +129,13 @@ const layerVcsDriverRegistryTest = VcsDriverRegistry.layer.pipe(
 const layerCheckpointStoreTest = CheckpointStore.layer.pipe(
   Layer.provide(layerVcsDriverRegistryTest),
 );
-const layerGitWorkflowTest = Layer.mock(GitWorkflow.GitWorkflowService)({
-  pruneWorktrees: () => Effect.void,
-  createWorktree: () => Effect.succeed({} as never),
-});
+const layerGitWorkflowTest = Layer.merge(
+  Layer.mock(GitWorkflow.GitWorkflowService)({
+    pruneWorktrees: () => Effect.void,
+    createWorktree: () => Effect.succeed({} as never),
+  }),
+  layerNoTaskFolders,
+);
 const layerProjectServiceTest = Layer.mock(ProjectService.ProjectService)({
   getById: () => Effect.succeedNone,
 });
@@ -347,6 +353,7 @@ const layerTest = Layer.mergeAll(
   ProjectionStore.layer,
   EffectOutbox.layer,
   ThreadCommandExecutor.layer,
+  TaskFolderStore.layer,
 ).pipe(
   Layer.provide(McpSessionRegistryTestkit.layer),
   Layer.provide(McpProviderSessions.layer),
@@ -1528,6 +1535,31 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
             [],
           );
           assert.deepEqual(yield* outbox.listByCommandId(commandId), []);
+          if (status === "missing") {
+            // A task folder's linked project folder has no snapshot, even with nothing to restore.
+            const taskFolders = yield* TaskFolderStore.TaskFolderStore;
+            yield* taskFolders.put({
+              root: process.cwd(),
+              projectId: ProjectId.make("runtime-rollback-readiness-project"),
+              projectRoot: process.cwd(),
+              anchor: process.cwd(),
+              projectPath: process.cwd(),
+              projectIsWorktree: false,
+              repositories: [],
+            });
+            const linked = yield* orchestrator.dispatch({
+              type: "checkpoint.rollback",
+              commandId: CommandId.make("runtime-rollback-missing-linked"),
+              threadId,
+              checkpointId,
+              scopeId: scope.id,
+            });
+            assert.deepEqual(
+              linked.storedEvents.map((stored) => stored.event.type),
+              ["thread.metadata-updated", "checkpoint.rollback-requested"],
+            );
+            yield* taskFolders.remove(process.cwd());
+          }
         }
       }
     }).pipe(Effect.provide(Layer.fresh(layerTest))),
@@ -3451,6 +3483,83 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           ?.filter((link) => link.host === "git.cafe")
           .map((link) => link.url),
         [21353, 21354].map((number) => `https://git.cafe/pingdotgg/t3code/pulls/${number}`),
+      );
+    }),
+  );
+
+  it.effect("keeps the branch pull request beside one opened in another repository", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const projectId = ProjectId.make("repository-pr-project");
+      yield* seedProject({
+        projectId,
+        title: "Repository PR links",
+        workspaceRoot: "/workspace/repository-pr-links",
+        defaultModelSelection: null,
+        createdAt: "2026-09-17T00:00:00.000Z",
+      });
+      const linkedNumbers = Effect.fn("linkedNumbers")(function* (
+        id: string,
+        created: { readonly repository: string; readonly number: number },
+      ) {
+        const threadId = ThreadId.make(id);
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`${id}-create`),
+          threadId,
+          projectId,
+          title: "PR links",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: "feature/pr-links",
+          worktreePath: null,
+        });
+        const snapshot = yield* orchestrator.getShellSnapshot();
+        yield* orchestrator.dispatch({
+          type: "thread.pull-request.sync",
+          commandId: CommandId.make(`${id}-discover`),
+          threadId,
+          projectId,
+          snapshotSequence: snapshot.snapshotSequence,
+          expected: {
+            workspaceRoot: "/workspace/repository-pr-links",
+            branch: "feature/pr-links",
+            worktreePath: null,
+            linkedPullRequest: null,
+            branchPullRequest: null,
+          },
+          branchPullRequest: {
+            projectId,
+            repository: "pingdotgg/t3code",
+            number: 1,
+            url: "https://github.com/pingdotgg/t3code/pull/1",
+          },
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.pull-request.link",
+          commandId: CommandId.make(`${id}-link`),
+          threadId,
+          host: "github.com",
+          ...created,
+          url: `https://github.com/${created.repository}/pull/${created.number}`,
+          source: "created",
+        });
+        return (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.map(
+          (link) => `${link.repository}#${link.number}`,
+        );
+      });
+
+      assert.deepEqual(
+        yield* linkedNumbers("repository-pr-other", { repository: "pingdotgg/api", number: 7 }),
+        ["pingdotgg/t3code#1", "pingdotgg/api#7"],
+      );
+      // A branch that moved on to a new pull request does not drag the old one along.
+      assert.deepEqual(
+        yield* linkedNumbers("repository-pr-same", { repository: "pingdotgg/t3code", number: 2 }),
+        ["pingdotgg/t3code#2"],
       );
     }),
   );
@@ -9662,6 +9771,359 @@ it.layer(layerScratchPromotionTest)("turning a No project thread into a project"
         error.message,
         "Only a No project thread with its own folder can become a project.",
       );
+    }),
+  );
+});
+
+const MOVE_ROOT = "/tmp/runtime-layer-move";
+const MOVE_SCRATCH_ID = ProjectId.make("runtime-layer-move-scratch");
+// Each folder's Git directory, as `git rev-parse --git-common-dir` reports it from there.
+const MOVE_GIT_DIRS: Record<string, string> = {
+  [`${MOVE_ROOT}/app`]: ".git",
+  [`${MOVE_ROOT}/app/packages/web`]: "../../.git",
+  [`${MOVE_ROOT}/worktrees/app-fix`]: `${MOVE_ROOT}/app/.git`,
+  [`${MOVE_ROOT}/billing`]: ".git",
+};
+const layerThreadProjectMoveTest = ThreadProjectMove.layer.pipe(
+  Layer.provide(
+    Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+      isScratchProject: (projectId) => Effect.succeed(projectId === MOVE_SCRATCH_ID),
+      namedProjectsRoot: "/projects",
+    }),
+  ),
+  Layer.provide(
+    Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({
+      detect: ({ cwd }) => {
+        const metadataPath = MOVE_GIT_DIRS[cwd];
+        return Effect.succeed(
+          metadataPath === undefined
+            ? null
+            : {
+                kind: "git" as const,
+                repository: {
+                  kind: "git" as const,
+                  rootPath: cwd,
+                  metadataPath,
+                  freshness: {
+                    source: "live-local" as const,
+                    observedAt: DateTime.makeUnsafe(0),
+                    expiresAt: Option.none(),
+                  },
+                },
+                driver: {} as never,
+              },
+        );
+      },
+    }),
+  ),
+  Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+  Layer.provideMerge(layerProjectDeletionTest),
+);
+
+it.layer(layerThreadProjectMoveTest)("moving a thread to another project", (it) => {
+  const project = (name: string, workspaceRoot: string) =>
+    Effect.gen(function* () {
+      const projects = yield* ProjectService.ProjectService;
+      const projectId = ProjectId.make(`runtime-layer-move-${name}`);
+      if (Option.isNone(yield* projects.getById(projectId))) {
+        yield* projects.create({
+          commandId: CommandId.make(`runtime-layer-move-${name}-create`),
+          projectId,
+          title: name,
+          workspaceRoot,
+        });
+      }
+      return projectId;
+    });
+  const thread = (name: string, projectId: ProjectId, worktreePath: string | null) =>
+    Orchestrator.OrchestratorV2.pipe(
+      Effect.flatMap((orchestrator) =>
+        orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`runtime-layer-move-${name}-create`),
+          threadId: ThreadId.make(`runtime-layer-move-${name}`),
+          projectId,
+          title: name,
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: "main",
+          worktreePath,
+        }),
+      ),
+      Effect.as(ThreadId.make(`runtime-layer-move-${name}`)),
+    );
+  const shellOf = (threadId: ThreadId) =>
+    Orchestrator.OrchestratorV2.pipe(
+      Effect.flatMap((orchestrator) => orchestrator.getThreadShell(threadId)),
+    );
+
+  it.effect("moves a thread, its side chat and its scheduled tasks to the destination", () =>
+    Effect.gen(function* () {
+      const move = yield* ThreadProjectMove.ThreadProjectMove;
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const tasks = yield* ScheduledTaskService.ScheduledTaskService;
+      const app = yield* project("app", `${MOVE_ROOT}/app`);
+      const billing = yield* project("billing", `${MOVE_ROOT}/billing`);
+      const threadId = yield* thread("root", app, null);
+      const sideChatId = ThreadId.make("runtime-layer-move-root-side-chat");
+      yield* orchestrator.dispatch({
+        type: "thread.fork",
+        commandId: CommandId.make("runtime-layer-move-root-side-chat"),
+        sourceThreadId: threadId,
+        targetThreadId: sideChatId,
+        sourcePoint: { type: "latest_stable" },
+        sideChat: true,
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const { task } = yield* tasks.upsert({
+        id: ScheduledTaskId.make("runtime-layer-move-bound"),
+        title: "Bound",
+        prompt: "Check in",
+        enabled: true,
+        schedule: { type: "interval", everyMs: 60_000 },
+        projectId: app,
+        threadId,
+        workspaceStrategy: { type: "root" },
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        createdBy: "user",
+        creationSource: "web",
+      });
+      // An earlier attempt that failed partway already moved the side chat.
+      yield* orchestrator.dispatch({
+        type: "thread.project.move",
+        commandId: CommandId.make("runtime-layer-move-root-side-chat-partial"),
+        threadId: sideChatId,
+        projectId: billing,
+        clearWorktreePath: false,
+      });
+
+      const result = yield* move.move({ threadId, projectId: billing, byOwnAgent: false });
+
+      assert.deepEqual(result, { projectId: billing, worktreePath: null });
+      const shell = yield* shellOf(threadId);
+      assert.equal(shell?.projectId, billing);
+      assert.isNull(shell?.branch ?? null);
+      assert.equal((yield* shellOf(sideChatId))?.projectId, billing);
+      const sideChatMove = yield* move
+        .move({ threadId: sideChatId, projectId: app, byOwnAgent: false })
+        .pipe(Effect.flip);
+      assert.include(sideChatMove.message, "Move the parent instead");
+      const saved = (yield* tasks.list()).tasks.find((candidate) => candidate.id === task.id);
+      assert.equal(saved?.projectId, billing);
+    }),
+  );
+
+  it.effect("keeps a worktree only for a project in the same repository", () =>
+    Effect.gen(function* () {
+      const move = yield* ThreadProjectMove.ThreadProjectMove;
+      const app = yield* project("app", `${MOVE_ROOT}/app`);
+      const web = yield* project("web", `${MOVE_ROOT}/app/packages/web`);
+      const billing = yield* project("billing", `${MOVE_ROOT}/billing`);
+      const worktreePath = `${MOVE_ROOT}/worktrees/app-fix`;
+      const threadId = yield* thread("worktree", app, worktreePath);
+
+      const refused = yield* move
+        .move({ threadId, projectId: billing, byOwnAgent: false })
+        .pipe(Effect.flip);
+      assert.include(refused.message, "can only move to a project in the same repository");
+      assert.equal((yield* shellOf(threadId))?.projectId, app);
+
+      assert.deepEqual(yield* move.move({ threadId, projectId: web, byOwnAgent: false }), {
+        projectId: web,
+        worktreePath,
+      });
+      const shell = yield* shellOf(threadId);
+      assert.equal(shell?.worktreePath, worktreePath);
+      assert.equal(shell?.branch, "main");
+    }),
+  );
+
+  it.effect("leaves a No project chat's folder behind", () =>
+    Effect.gen(function* () {
+      const projects = yield* ProjectService.ProjectService;
+      const move = yield* ThreadProjectMove.ThreadProjectMove;
+      const billing = yield* project("billing", `${MOVE_ROOT}/billing`);
+      if (Option.isNone(yield* projects.getById(MOVE_SCRATCH_ID))) {
+        yield* projects.create({
+          commandId: CommandId.make("runtime-layer-move-scratch-project-create"),
+          projectId: MOVE_SCRATCH_ID,
+          title: "No project",
+          workspaceRoot: `${MOVE_ROOT}/scratch`,
+        });
+      }
+      const folder = `${MOVE_ROOT}/scratch/2026-01-01-plan`;
+      const threadId = yield* thread("scratch", MOVE_SCRATCH_ID, folder);
+
+      assert.deepEqual(yield* move.move({ threadId, projectId: billing, byOwnAgent: false }), {
+        projectId: billing,
+        worktreePath: null,
+        scratchFolder: folder,
+      });
+      assert.isNull((yield* shellOf(threadId))?.worktreePath ?? null);
+      const back = yield* move
+        .move({ threadId, projectId: MOVE_SCRATCH_ID, byOwnAgent: false })
+        .pipe(Effect.flip);
+      assert.include(back.message, "cannot move into No project");
+    }),
+  );
+
+  it.effect("refuses a running thread unless its own agent asks, then moves at turn end", () =>
+    Effect.gen(function* () {
+      const move = yield* ThreadProjectMove.ThreadProjectMove;
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const app = yield* project("app", `${MOVE_ROOT}/app`);
+      const billing = yield* project("billing", `${MOVE_ROOT}/billing`);
+      const threadId = yield* thread("busy", app, null);
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("runtime-layer-move-busy-message"),
+        threadId,
+        messageId: MessageId.make("runtime-layer-move-busy-message"),
+        text: "Move this thread to billing.",
+        attachments: [],
+        modelSelection,
+        dispatchMode: { type: "start_immediately" },
+      });
+      const run = (yield* orchestrator.getThreadProjection(threadId)).runs[0];
+      if (run === undefined) return yield* Effect.die(new Error("Run missing."));
+
+      const refused = yield* move
+        .move({ threadId, projectId: billing, byOwnAgent: false })
+        .pipe(Effect.flip);
+      assert.include(refused.message, "is still working");
+
+      const moved = yield* orchestrator
+        .streamStoredEventsFrom({
+          threadId,
+          afterSequence: 0,
+          eventType: "thread.metadata-updated",
+        })
+        .pipe(
+          // Sending the message also updates metadata, so wait for the move's own event.
+          Stream.filter(
+            ({ event }) =>
+              event.type === "thread.metadata-updated" && event.payload.projectId === billing,
+          ),
+          Stream.runHead,
+          Effect.forkChild,
+        );
+      assert.deepEqual(yield* move.move({ threadId, projectId: billing, byOwnAgent: true }), {
+        projectId: billing,
+        worktreePath: null,
+        movesWhenTurnEnds: true,
+      });
+      assert.equal((yield* shellOf(threadId))?.projectId, app);
+      const now = yield* DateTime.now;
+      yield* eventSink.write({
+        commandId: CommandId.make("runtime-layer-move-busy-completed"),
+        events: [
+          {
+            id: EventId.make("runtime-layer-move-busy-completed"),
+            type: "run.updated",
+            threadId,
+            runId: run.id,
+            occurredAt: now,
+            payload: { ...run, status: "completed", startedAt: now, completedAt: now },
+          },
+        ],
+      });
+      yield* Fiber.join(moved);
+
+      assert.equal((yield* shellOf(threadId))?.projectId, billing);
+    }),
+  );
+
+  it.effect("moves at turn end once a busy side chat finishes", () =>
+    Effect.gen(function* () {
+      const move = yield* ThreadProjectMove.ThreadProjectMove;
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const app = yield* project("app", `${MOVE_ROOT}/app`);
+      const billing = yield* project("billing", `${MOVE_ROOT}/billing`);
+      const threadId = yield* thread("busy-follower", app, null);
+      const sideChatId = ThreadId.make("runtime-layer-move-busy-follower-side-chat");
+      yield* orchestrator.dispatch({
+        type: "thread.fork",
+        commandId: CommandId.make("runtime-layer-move-busy-follower-side-chat"),
+        sourceThreadId: threadId,
+        targetThreadId: sideChatId,
+        sourcePoint: { type: "latest_stable" },
+        sideChat: true,
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const startRun = (target: ThreadId, name: string) =>
+        Effect.gen(function* () {
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make(`runtime-layer-move-${name}-message`),
+            threadId: target,
+            messageId: MessageId.make(`runtime-layer-move-${name}-message`),
+            text: "Keep working.",
+            attachments: [],
+            modelSelection,
+            dispatchMode: { type: "start_immediately" },
+          });
+          const run = (yield* orchestrator.getThreadProjection(target)).runs[0];
+          if (run === undefined) return yield* Effect.die(new Error("Run missing."));
+          return run;
+        });
+      const complete = (target: ThreadId, run: OrchestrationV2Run, name: string) =>
+        Effect.gen(function* () {
+          const now = yield* DateTime.now;
+          yield* eventSink.write({
+            commandId: CommandId.make(`runtime-layer-move-${name}-completed`),
+            events: [
+              {
+                id: EventId.make(`runtime-layer-move-${name}-completed`),
+                type: "run.updated",
+                threadId: target,
+                runId: run.id,
+                occurredAt: now,
+                payload: { ...run, status: "completed", startedAt: now, completedAt: now },
+              },
+            ],
+          });
+        });
+      const parentRun = yield* startRun(threadId, "busy-follower-parent");
+      const sideChatRun = yield* startRun(sideChatId, "busy-follower-side-chat");
+
+      const moved = yield* orchestrator
+        .streamStoredEventsFrom({
+          threadId,
+          afterSequence: 0,
+          eventType: "thread.metadata-updated",
+        })
+        .pipe(
+          Stream.filter(
+            ({ event }) =>
+              event.type === "thread.metadata-updated" && event.payload.projectId === billing,
+          ),
+          Stream.runHead,
+          Effect.forkChild,
+        );
+      assert.isTrue(
+        (yield* move.move({ threadId, projectId: billing, byOwnAgent: true })).movesWhenTurnEnds,
+      );
+      yield* complete(threadId, parentRun, "busy-follower-parent");
+      // The side chat still works, so the move waits for it instead of the parent's next run.
+      assert.equal((yield* shellOf(threadId))?.projectId, app);
+      yield* complete(sideChatId, sideChatRun, "busy-follower-side-chat");
+      yield* Fiber.join(moved);
+
+      assert.equal((yield* shellOf(threadId))?.projectId, billing);
+      assert.equal((yield* shellOf(sideChatId))?.projectId, billing);
     }),
   );
 });

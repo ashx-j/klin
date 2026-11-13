@@ -2,6 +2,8 @@ import {
   type AuthEnvironmentScope,
   AuthSettingsWriteScope,
   type PluginFailure,
+  type PluginFleet,
+  type PluginId,
   type PluginManifest,
   type PluginListResult,
   type PluginState,
@@ -18,9 +20,15 @@ import * as Stream from "effect/Stream";
 import * as EnvironmentTheme from "../environmentTheme.ts";
 import type { PluginActivation } from "./PluginApi.ts";
 import type { DiscoveredPlugin } from "./pluginDiscovery.ts";
+import { fleetOf } from "./pluginFleet.ts";
 import type { PluginFailures } from "./pluginFailures.ts";
 import type { PluginsConfigFile } from "./pluginsConfig.ts";
 import type { PluginWebFolders } from "./pluginWebFiles.ts";
+
+interface Published {
+  readonly states: ReadonlyArray<PluginState>;
+  readonly fleet: PluginFleet;
+}
 
 export interface PluginRecord {
   readonly plugin: DiscoveredPlugin;
@@ -48,6 +56,7 @@ const toState = (
   record: PluginRecord,
   config: PluginsConfigFile,
   serverFailure: string | undefined,
+  sharingProblem: string | undefined,
 ): PluginState => {
   const manifest = manifestOf(record.plugin);
   const { id } = record.plugin;
@@ -73,6 +82,7 @@ const toState = (
     hasWeb: manifest?.web !== undefined,
     hasSettings: manifest?.settingsSchema !== undefined,
     ...(serverFailure === undefined ? {} : { serverFailure }),
+    ...(sharingProblem === undefined ? {} : { sharingProblem }),
     ...("unknownKeys" in record.plugin && record.plugin.unknownKeys !== undefined
       ? { unknownManifestKeys: record.plugin.unknownKeys }
       : {}),
@@ -87,25 +97,39 @@ export const makePluginStates = Effect.fn("PluginStates.make")(function* (input:
   readonly records: Ref.Ref<ReadonlyArray<PluginRecord>>;
   readonly config: Effect.Effect<PluginsConfigFile>;
   readonly failures: PluginFailures;
+  readonly sharingProblem: (pluginId: PluginId) => string | undefined;
 }) {
   const { records, failures } = input;
   const environmentThemes = yield* EnvironmentTheme.EnvironmentThemeService;
   const path = yield* Path.Path;
-  const changes = yield* PubSub.sliding<ReadonlyArray<PluginState>>(1);
+  const changes = yield* PubSub.sliding<Published>(1);
   const publishLock = yield* Semaphore.make(1);
 
-  const statesOf = Effect.fn("PluginHost.statesOf")(function* (all: ReadonlyArray<PluginRecord>) {
+  const publishedOf = Effect.fn("PluginHost.statesOf")(function* (
+    all: ReadonlyArray<PluginRecord>,
+  ) {
     const config = yield* input.config;
     const failureOf = yield* failures.current;
-    return all.map((record) =>
-      toState(record, config, failureOf(record.plugin.id, record.revision)),
-    );
+    return {
+      states: all.map((record) =>
+        toState(
+          record,
+          config,
+          failureOf(record.plugin.id, record.revision),
+          input.sharingProblem(record.plugin.id),
+        ),
+      ),
+      fleet: fleetOf(config),
+    };
   });
-  const current = Ref.get(records).pipe(Effect.flatMap(statesOf));
+  const current = Ref.get(records).pipe(
+    Effect.flatMap(publishedOf),
+    Effect.map(({ states }) => states),
+  );
   // What the last publish sent, starting from the empty list clients get before any. Settings
   // rescans on every visit, and a list sent again would make every client stream rebuild what it
   // already shows.
-  let published: ReadonlyArray<PluginState> = [];
+  let published: Published = { states: [], fleet: { sharing: true, entries: [], keptOff: [] } };
   // The copies whose theme folders the theme service last got, which reads every folder each time.
   // A reload discovers its plugin afresh, so the new copy's themes are read again.
   let themed: ReadonlyArray<DiscoveredPlugin> = [];
@@ -113,8 +137,14 @@ export const makePluginStates = Effect.fn("PluginStates.make")(function* (input:
   const publishUnderLock = publishLock.withPermits(1)(
     Effect.gen(function* () {
       const all = yield* Ref.get(records);
-      const states = yield* statesOf(all);
-      if (Equal.equals(states, published)) return;
+      const next = yield* publishedOf(all);
+      if (
+        Equal.equals(next.states, published.states) &&
+        Equal.equals(next.fleet, published.fleet)
+      ) {
+        return;
+      }
+      const { states } = next;
       // Every enabled plugin that has not failed, so a starting or restarting one keeps its themes:
       // windows would otherwise paint T3's colors, forget the saved theme, then switch back.
       const copies = all.flatMap((record, index) => {
@@ -127,23 +157,25 @@ export const makePluginStates = Effect.fn("PluginStates.make")(function* (input:
         );
         themed = copies;
       }
-      yield* PubSub.publish(changes, states);
-      published = states;
+      yield* PubSub.publish(changes, next);
+      published = next;
     }),
   );
 
   const stream = Stream.unwrap(
     Effect.gen(function* () {
       const subscription = yield* PubSub.subscribe(changes);
-      const snapshot = yield* current;
+      const snapshot = yield* Ref.get(records).pipe(Effect.flatMap(publishedOf));
       return Stream.concat(Stream.make(snapshot), Stream.fromSubscription(subscription));
     }),
   );
+  // Only a client that manages plugins copies them between machines.
   const forClient =
     (scopes: ReadonlyArray<AuthEnvironmentScope>) =>
-    (plugins: ReadonlyArray<PluginState>): PluginListResult => ({
-      plugins: managesPlugins(scopes) ? plugins : plugins.map(withoutServerPaths),
-    });
+    ({ states, fleet }: Published): PluginListResult =>
+      managesPlugins(scopes)
+        ? { plugins: states, fleet }
+        : { plugins: states.map(withoutServerPaths) };
 
   return {
     current,

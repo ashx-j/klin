@@ -45,6 +45,16 @@ moves and the agent keeps working in the same place. Other threads in that folde
 move with it. Rename the project in its settings, and use **Initialize Git** to
 get branch and diff controls.
 
+### Move a thread to another project
+
+Pick **Move to project** from a thread's menu or the command palette. From its
+next turn the thread works in the new project's folder. A thread in a worktree
+keeps its worktree, so it can only move to a project in the same repository. A
+thread without a project leaves its folder behind, and the files stay there.
+Stop a running thread, and any background agents or commands it left running,
+before you move it. You can also ask a thread's agent to move its own thread;
+the move happens when its turn ends.
+
 ### Start in the background
 
 In a desktop browser or the desktop app, press `Cmd+Enter` on macOS or `Ctrl+Enter`

@@ -2,7 +2,10 @@ import { useAuth } from "@clerk/react";
 import { Link } from "@tanstack/react-router";
 import { managedCapabilityDenial } from "@t3tools/contracts";
 
+import { APP_BASE_NAME } from "~/branding";
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
+import { isElectron } from "~/env";
+import { isMacPlatform } from "~/lib/utils";
 import { useT3ConnectAuthPrompt } from "../clerk/useT3ConnectAuthPrompt";
 import { Button } from "../ui/button";
 import { Switch } from "../ui/switch";
@@ -25,6 +28,7 @@ export function LabsSettingsPanel() {
         <PromptSuggestionsRow />
         <SimlockHostsRow />
         <FastWorktreeCheckoutRow />
+        {isElectron && !isMacPlatform(navigator.platform) ? <KeepRunningInTrayRow /> : null}
       </SettingsSection>
     </SettingsPageContainer>
   );
@@ -69,6 +73,29 @@ function BoringSidebarMultilineRow() {
             updateSettings({ boringSidebarMultilineRows: Boolean(checked) })
           }
           aria-label="Two-line folder rows"
+        />
+      }
+    />
+  );
+}
+
+function KeepRunningInTrayRow() {
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  return (
+    <SettingsRow
+      {...searchableSetting("keep-running-in-tray")}
+      description={
+        `Closing the window keeps ${APP_BASE_NAME} running in the system tray, so agents, remote connections and thread notifications keep working. Open or quit it from the tray icon.` +
+        (navigator.platform.toLowerCase().includes("linux")
+          ? ` Linux requires system tray support. If no icon appears, launch ${APP_BASE_NAME} again to restore the window.`
+          : "")
+      }
+      control={
+        <Switch
+          checked={settings.keepRunningInTray}
+          onCheckedChange={(checked) => updateSettings({ keepRunningInTray: Boolean(checked) })}
+          aria-label="Keep running in tray"
         />
       }
     />

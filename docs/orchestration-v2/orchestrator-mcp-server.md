@@ -446,9 +446,12 @@ often leave a dev server running.
 ### `t3_thread_update`
 
 Updates metadata for the calling thread or any other thread in the environment.
-The typed actions are `rename`, which requires `title`, and `regenerate_title`,
-which rejects one. Pull request links go through the separate
-`link_pull_request` and `unlink_pull_request` tools. Branch and workspace
+The typed actions are `rename`, which requires `title`, `regenerate_title`,
+which rejects one, and `move_project`, which requires `projectId`. `move_project`
+calls the same `ThreadProjectMove` service as the thread menu; when the calling
+thread moves itself mid-turn, the move waits for that turn to complete
+(`movesWhenTurnEnds`). Pull request links go through the separate
+`link_pull_request` and `unlink_pull_request` tools. Branch and other workspace
 changes are outside this tool.
 
 The result includes the command ID and durable event sequence together with the

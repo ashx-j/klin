@@ -1,7 +1,7 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
-import { PLUGIN_UPLOAD_MAX_BYTES } from "@t3tools/contracts";
+import { PLUGIN_UPLOAD_MAX_BYTES, type PluginFleetEntry, PluginId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -13,9 +13,11 @@ import * as ServerConfig from "../config.ts";
 import * as PluginHost from "./PluginHost.ts";
 import {
   fixturesDir,
+  fleetEntries,
   layerConfig,
   layerHost,
   listStates,
+  stateOf,
   waitForStatuses,
 } from "./pluginHostTestHarness.ts";
 import * as PluginUploads from "./PluginUploads.ts";
@@ -25,12 +27,17 @@ const uploader = Effect.fn(function* () {
   const host = yield* PluginHost.PluginHost;
   yield* waitForStatuses(host, {});
   const app = yield* HttpRouter.toHttpEffect(PluginUploads.layerRoute);
-  return (url: string, files: Readonly<Record<string, string | Uint8Array<ArrayBuffer>>>) =>
+  return (
+    url: string,
+    files: Readonly<Record<string, string | Uint8Array<ArrayBuffer>>>,
+    fleet?: PluginFleetEntry,
+  ) =>
     Effect.gen(function* () {
       const form = new FormData();
       for (const [path, contents] of Object.entries(files)) {
         form.append("file", new Blob([contents]), encodeURIComponent(path));
       }
+      if (fleet !== undefined) form.append("fleet", JSON.stringify(fleet));
       // Encoded up front: undici keeps writing a FormData body after the route stops reading at
       // the size limit, and reports that as an unhandled rejection.
       const encoded = new Response(form);
@@ -53,6 +60,29 @@ const uploader = Effect.fn(function* () {
 });
 
 const issueUrl = PluginUploads.PluginUploads.use((uploads) => uploads.issueUrl);
+
+/** Fetches a plugin's files through the download route, as a client copying it does. */
+const download = Effect.fn(function* (pluginId: PluginId) {
+  const uploads = yield* PluginUploads.PluginUploads;
+  const { relativeUrl, revision } = yield* uploads.issueDownloadUrl(pluginId);
+  const app = yield* HttpRouter.toHttpEffect(PluginUploads.layerDownloadRoute);
+  const response = yield* app.pipe(
+    Effect.provideService(
+      HttpServerRequest.HttpServerRequest,
+      HttpServerRequest.fromWeb(new Request(`http://localhost${relativeUrl}`)),
+    ),
+    Effect.scoped,
+  );
+  const form = yield* Effect.promise(() => HttpServerResponse.toWeb(response).formData());
+  const files: Record<string, Uint8Array<ArrayBuffer>> = {};
+  for (const part of form.getAll("file")) {
+    if (typeof part === "string") continue;
+    files[decodeURIComponent(part.name)] = new Uint8Array(
+      yield* Effect.promise(() => part.arrayBuffer()),
+    );
+  }
+  return { revision, files };
+});
 
 const helloFiles = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
@@ -117,6 +147,51 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PluginUploads", 
         assert.strictEqual((yield* upload(relativeUrl, files)).status, 404);
       }),
     ),
+  );
+
+  it.effect("copies a plugin to another machine with its switch, once, and only as sent", () =>
+    Effect.gen(function* () {
+      const hello = PluginId.make("hello-plugin");
+      const machineA = yield* withHost(
+        Effect.gen(function* () {
+          const host = yield* PluginHost.PluginHost;
+          const upload = yield* uploader();
+          assert.strictEqual(
+            (yield* upload((yield* issueUrl).relativeUrl, yield* helloFiles)).status,
+            200,
+          );
+          yield* host.setEnabled(hello, true);
+          const entry = (yield* fleetEntries(host)).get(hello);
+          const copied = yield* download(hello);
+          return { entry, copied };
+        }),
+      );
+      const { entry, copied } = machineA;
+      assert.isDefined(entry);
+      if (entry === undefined) return;
+      assert.strictEqual(copied.revision, entry.revision);
+
+      yield* withHost(
+        Effect.gen(function* () {
+          const host = yield* PluginHost.PluginHost;
+          const upload = yield* uploader();
+          const tampered = { ...copied.files, "server.cjs": "module.exports = {};" };
+          const refused = yield* upload((yield* issueUrl).relativeUrl, tampered, entry);
+          assert.strictEqual(refused.status, 400);
+          assert.isUndefined(stateOf(yield* listStates(host), "hello-plugin"));
+
+          const first = yield* upload((yield* issueUrl).relativeUrl, copied.files, entry);
+          assert.strictEqual(first.status, 200);
+          assert.include(JSON.parse(first.text).plugin, { id: "hello-plugin", status: "active" });
+          assert.deepStrictEqual((yield* fleetEntries(host)).get(hello), entry);
+          // A second copy of the same entry, such as from another open window, restarts nothing.
+          const started = stateOf(yield* listStates(host), "hello-plugin")?.revision;
+          const again = yield* upload((yield* issueUrl).relativeUrl, copied.files, entry);
+          assert.strictEqual(again.status, 200);
+          assert.strictEqual(stateOf(yield* listStates(host), "hello-plugin")?.revision, started);
+        }),
+      );
+    }),
   );
 
   it.effect("refuses a folder over the size limit before installing it", () =>

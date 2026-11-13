@@ -6,7 +6,9 @@ the web and desktop apps. Plugins are trusted code: they run with the same acces
 
 [`examples/quick-notes`](./examples/quick-notes) is a plugin to copy from. It builds its web half
 instead of committing it: run `vp run build:examples` in `packages/plugin-sdk` before adding it to
-T3 Code, which builds it to `dist/web.js` with the Vite preset below. The plugins in
+T3 Code, which builds it to `dist/web.js` with the Vite preset below.
+[`examples/session-archive`](./examples/session-archive) is a server-only plugin that saves every
+event from all your machines into one SQLite database. The plugins in
 [`fixtures/`](./fixtures) back the tests and are small and working too. They are written by hand
 and need no build. `hello-web` uses most of the web API.
 
@@ -89,8 +91,13 @@ module.exports = {
 ```
 
 `activate` receives the [`PluginApi`](./src/server.ts): settings, storage, RPC methods and channels
-for the web half, and MCP tools for agents. `api.settings.get()` reads from memory after its first
-call, so a handler can call it on every request.
+for the web half, MCP tools for agents, and the environment's stored events. `api.settings.get()`
+reads from memory after its first call, so a handler can call it on every request.
+`api.environmentId` names the environment, and `api.dataDir` is a folder for the plugin's own
+files, such as a database, which T3 Code deletes when the plugin is removed. Both arrived in API
+version 2. Never write into `rootDir`: an update replaces the whole folder, and T3 Code copies the
+plugin to the user's other machines whenever its files change, so a file written there restarts
+the plugin everywhere.
 
 Everything a plugin registers is released when it is disabled, reloaded or uninstalled; add your
 own cleanup with `api.onDeactivate`.
@@ -118,6 +125,42 @@ off after the restart until the user turns it on again. That includes a throw in
 and an `'error'` event with no listener, so catch errors in callbacks and give every child process,
 socket and stream you create an `'error'` listener.
 
+## Stored events
+
+`api.events.stored(options)` reads the environment's stored orchestration events: prompts,
+replies, reasoning, tool calls, subagents, and project and thread changes. It yields batches in
+sequence order, catching up from `afterSequence` and then waiting for new events, until the loop
+stops, `signal` aborts or the plugin is turned off. It reads the next batch only when your loop asks
+for it, so a slow plugin falls behind on its own and never holds up T3 Code. It arrived in API
+version 2.
+
+```js
+activate(api) {
+  // Not awaited: `activate` must finish within 30 seconds, and the loop runs until the plugin stops.
+  void (async () => {
+    const saved = await api.storage.get("cursor");
+    for await (const batch of api.events.stored({ afterSequence: typeof saved === "number" ? saved : 0 })) {
+      for (const event of batch.events) handle(event.type, JSON.parse(event.payloadJson));
+      await api.storage.set("cursor", batch.resumeAfter);
+    }
+  })().catch((error) => api.log.error("event loop stopped", { error: String(error) }));
+}
+```
+
+- Save each batch's `resumeAfter` once you handled it and pass it after a restart. It can be
+  past the last event, when the feed skipped rows `types` left out. Without `afterSequence` the feed
+  starts with the next event stored. `types` keeps only some event types, and `batchSize` sets at
+  most how many events a batch has, from 1 to 500. A batch also stops at about 4 MB.
+- Each event's payload and metadata are JSON text in T3's own format, which changes between
+  releases. To keep events, keep the text as it is.
+- T3 Code deletes a stored event about a day after its threads show it, keeping a few older ones,
+  such as each thread's newest event. So a full read from 0 gets only what is left, and a plugin
+  that was off for longer misses events. `batch.missed` names the range T3 may have deleted before
+  the feed read it.
+- Tool output is what the provider reported. Claude Code cuts most tool output at about 30,000
+  characters before the agent reads it, so the event has the cut text. Other providers' output is
+  stored as they report it, and T3 Code cuts a file change's diff at 32 KB.
+
 ## Tools for agents
 
 `api.mcp.registerTool(tool, handler)` gives agents a tool, as
@@ -143,8 +186,9 @@ socket and stream you create an `'error'` listener.
   `registerTool` throws when a tool breaks a rule, so a plugin that registers it in `activate` fails
   to start and says why.
 
-The server API can't read T3's threads, projects or providers. A tool can keep its own data per
-thread in `storage` under the `threadId`, but it can't look that thread up.
+The server API can't look up T3's threads, projects or providers; `events.stored` is a read-only
+feed of what happened in them. A tool can keep its own data per thread in `storage` under the
+`threadId`.
 
 ## Web half
 
@@ -264,9 +308,13 @@ parts of your design to survive that. Build each part on the most stable thing T
 
 In Settings → Plugins, choose **Add plugin**, open **Link a plugin folder** and enter the plugin's
 folder path. Then turn the plugin on on its row, and use **Reload** after each change. The path is
-on the environment's machine. Linking adds the folder to `devPaths` in `plugins.json`, and
-**Unlink** on its row removes it and leaves the folder alone. Linking refuses a folder whose id is
-already listed, so remove the installed copy first.
+on the environment's machine. Linking adds the folder to `devPaths` in `plugins.json`, and refuses a
+folder whose id is already linked from another folder. Linking in place of an installed copy keeps
+the plugin's switch, settings and data. The user's other machines that share plugins get an
+installed copy, and a new copy after each **Reload** that changed its files, without `.env` files.
+**Unlink** on its row stops loading the folder and leaves it alone, and, like **Remove**, removes
+the plugin from those machines too.
 
 To install a finished plugin, drag its folder onto Settings → Plugins, or use **Add plugin** to
-choose it. Unlink a linked copy first. It installs turned off, so turn it on on its row.
+choose it. Dropping it in place of a linked folder keeps the plugin's switch, settings and data. A
+new plugin installs turned off, so turn it on on its row.
