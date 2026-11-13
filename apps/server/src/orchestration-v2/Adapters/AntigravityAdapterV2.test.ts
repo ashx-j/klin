@@ -588,6 +588,129 @@ describe("AntigravityAdapterV2 workspace changes", () => {
       assert.isTrue(Exit.isFailure(fromA), "the previous workspace is no longer readable");
     }).pipe(Effect.provide(layerSession)),
   );
+
+  it.effect("restarts the agent with the turn's tracked folders when they change", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const crypto = yield* SecureRandom.SecureRandom;
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      const runtimeRoots: Array<ReadonlyArray<string> | undefined> = [];
+      const instanceId = ProviderInstanceId.make("antigravity-tracked-folders-test");
+      const adapter = yield* makeAntigravityAdapterV2({
+        instanceId,
+        selfInvocation: yield* resolveSelfInvocation(),
+        makeRuntime: (input) =>
+          Effect.sync(() => runtimeRoots.push(input.extraRoots)).pipe(
+            Effect.andThen(
+              makeAntigravityAcpRuntime({
+                ...input,
+                childProcessSpawner,
+                spawn: {
+                  command: process.execPath,
+                  args: [mockAgentPath],
+                  cwd: input.cwd,
+                  env: { T3_ACP_ANTIGRAVITY: "1", T3_ACP_SESSION_LIFECYCLE: "1" },
+                },
+              }),
+            ),
+            Effect.provideService(SecureRandom.SecureRandom, crypto),
+          ),
+        withProcess: (_stop, task) => task,
+        defaultModel: Effect.undefined,
+      });
+      const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-ag-roots-" });
+      const policyWith = (extraRoots?: ReadonlyArray<string>) =>
+        ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: workspace,
+          ...(extraRoots === undefined
+            ? {}
+            : {
+                workspace: {
+                  folders: extraRoots.map((root) => ({
+                    name: path.basename(root),
+                    path: root,
+                    isGitRepository: true,
+                  })),
+                  extraRoots,
+                },
+              }),
+        });
+      const threadId = ThreadId.make("thread-antigravity-tracked-folders");
+      const modelSelection = { instanceId, model: "gemini-test-low" } as const;
+      const session = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-antigravity-tracked-folders"),
+        modelSelection,
+        runtimePolicy: policyWith(),
+      });
+      const providerThread = yield* session.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy: policyWith(),
+      });
+      const now = yield* DateTime.now;
+      let runOrdinal = 0;
+      const send = Effect.fnUntraced(function* (extraRoots: ReadonlyArray<string>) {
+        runOrdinal += 1;
+        yield* session.startTurn({
+          appThread: {
+            createdBy: "user",
+            creationSource: "web",
+            id: threadId,
+            projectId: ProjectId.make("project-antigravity-tracked-folders"),
+            title: "Antigravity tracked folders",
+            providerInstanceId: instanceId,
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            activeProviderThreadId: providerThread.id,
+            lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+            forkedFrom: null,
+            createdAt: now,
+            updatedAt: now,
+            archivedAt: null,
+            settledOverride: null,
+            settledAt: null,
+            lastVisitedAt: null,
+            deletedAt: null,
+          },
+          threadId,
+          runId: RunId.make(`run-antigravity-tracked-folders-${runOrdinal}`),
+          runOrdinal,
+          providerTurnOrdinal: runOrdinal,
+          attemptId: RunAttemptId.make(`attempt-antigravity-tracked-folders-${runOrdinal}`),
+          rootNodeId: NodeId.make(`node-antigravity-tracked-folders-${runOrdinal}`),
+          providerThread,
+          message: {
+            createdBy: "user",
+            creationSource: "web",
+            messageId: MessageId.make(`message-antigravity-tracked-folders-${runOrdinal}`),
+            text: "Look at the api.",
+            attachments: [],
+          },
+          modelSelection,
+          runtimePolicy: policyWith(extraRoots),
+        });
+        yield* session.events.pipe(
+          Stream.filter((event) => event.type === "turn.terminal"),
+          Stream.runHead,
+        );
+      });
+
+      yield* send(["/repos/api"]);
+      yield* send(["/repos/api"]);
+      yield* send(["/repos/api", "/repos/web"]);
+      assert.deepEqual(runtimeRoots, [undefined, ["/repos/api"], ["/repos/api", "/repos/web"]]);
+    }).pipe(Effect.provide(layerSession)),
+  );
 });
 
 describe("AntigravityAdapterV2 html_render pages", () => {
