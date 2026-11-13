@@ -982,6 +982,137 @@ describe("CursorAdapterV2", () => {
     ),
   );
 
+  it.effect("reopens the Cursor agent when the thread's tracked folders change", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "cursor-v2-dirs-" });
+      const opens: Array<{ operation: string; dirs: ReadonlyArray<string> | undefined }> = [];
+      const instanceId = ProviderInstanceId.make("cursor");
+      const threadId = ThreadId.make("cursor-dirs-thread");
+      const modelSelection = { instanceId, model: "composer-2.5" };
+      const policyWith = (extraRoots?: ReadonlyArray<string>) =>
+        ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: workspace,
+          ...(extraRoots === undefined
+            ? {}
+            : {
+                workspace: {
+                  folders: extraRoots.map((path) => ({ name: path, path, isGitRepository: true })),
+                  extraRoots,
+                },
+              }),
+        });
+      const adapter = yield* makeCursorAdapterV2({
+        instanceId,
+        environment: { HOME: workspace },
+      }).pipe(
+        Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
+          assertComplete: Effect.void,
+          open: (input) =>
+            Effect.sync(() => {
+              opens.push({ operation: input.operation, dirs: input.options.local?.dirs });
+              return {
+                agentId: "native-cursor-dirs",
+                listMessages: Effect.succeed([]),
+                close: Effect.void,
+                send: () =>
+                  Effect.succeed({
+                    agentId: "native-cursor-dirs",
+                    runId: `native-cursor-run-${opens.length}`,
+                    wait: Effect.succeed({
+                      id: `native-cursor-run-${opens.length}`,
+                      requestId: "native-request",
+                      status: "finished" as const,
+                      model: { id: "composer-2.5" },
+                      durationMs: 1,
+                    }),
+                    cancel: Effect.void,
+                  }),
+              };
+            }),
+        }),
+        Effect.provide(TestProviderHost.layer({ cwd: workspace })),
+      );
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("cursor-dirs-session"),
+        modelSelection,
+        runtimePolicy: policyWith(),
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy: policyWith(),
+      });
+      const now = yield* DateTime.now;
+      let runOrdinal = 0;
+      const send = Effect.fnUntraced(function* (extraRoots: ReadonlyArray<string>) {
+        runOrdinal += 1;
+        yield* runtime.startTurn({
+          threadId,
+          providerThread,
+          modelSelection,
+          runtimePolicy: policyWith(extraRoots),
+          runId: RunId.make(`cursor-dirs-run-${runOrdinal}`),
+          runOrdinal,
+          providerTurnOrdinal: runOrdinal,
+          attemptId: RunAttemptId.make(`cursor-dirs-attempt-${runOrdinal}`),
+          rootNodeId: NodeId.make(`cursor-dirs-root-${runOrdinal}`),
+          appThread: {
+            id: threadId,
+            projectId: ProjectId.make("cursor-dirs-project"),
+            createdBy: "user",
+            creationSource: "web",
+            title: "Cursor tracked folders",
+            providerInstanceId: instanceId,
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            activeProviderThreadId: providerThread.id,
+            lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+            forkedFrom: null,
+            createdAt: now,
+            updatedAt: now,
+            archivedAt: null,
+            settledOverride: null,
+            settledAt: null,
+            lastVisitedAt: null,
+            deletedAt: null,
+          },
+          message: {
+            messageId: MessageId.make(`cursor-dirs-message-${runOrdinal}`),
+            createdBy: "user",
+            creationSource: "web",
+            text: "Look at the api.",
+            attachments: [],
+          },
+        });
+        yield* runtime.events.pipe(
+          Stream.filter((event) => event.type === "turn.terminal"),
+          Stream.runHead,
+        );
+      });
+
+      yield* send(["/repos/api"]);
+      yield* send(["/repos/api"]);
+      yield* send(["/repos/api", "/repos/web"]);
+      assert.deepEqual(opens, [
+        { operation: "create", dirs: undefined },
+        { operation: "resume", dirs: ["/repos/api"] },
+        { operation: "resume", dirs: ["/repos/api", "/repos/web"] },
+      ]);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, IdAllocator.layer, McpProviderSessions.layer),
+      ),
+    ),
+  );
+
   it.effect("projects Cursor directory trees and lint diagnostics as file search results", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;

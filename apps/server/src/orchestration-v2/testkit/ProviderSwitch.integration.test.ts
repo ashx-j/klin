@@ -57,6 +57,7 @@ import * as EffectWorker from "../EffectWorker.ts";
 import * as EffectOutbox from "../EffectOutbox.ts";
 import * as ProjectionReplay from "./ProjectionReplay.ts";
 import * as ProjectionStore from "../ProjectionStore.ts";
+import * as ProjectStore from "../ProjectStore.ts";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import {
@@ -2973,6 +2974,40 @@ describe("orchestration v2 provider switching", () => {
           assert.deepEqual(afterFirst.providerThreads[0]?.pendingBackgroundTasks ?? [], []);
           const refused = yield* send(2, secondSelection, ":refused").pipe(Effect.flip);
           assert.include(String(refused.cause), "still running background agents or commands");
+          // Moving the thread to another folder would end the same work.
+          const otherProjectId = ProjectId.make("project:handoff-releases-session-other");
+          const createdAt = "2026-03-24T00:00:00.000Z";
+          yield* (yield* ProjectStore.ProjectStoreV2).apply({
+            sequence: 1,
+            eventId: EventId.make("event:handoff-releases-session-other"),
+            aggregateKind: "project",
+            aggregateId: otherProjectId,
+            occurredAt: createdAt,
+            commandId: null,
+            causationEventId: null,
+            correlationId: null,
+            metadata: {},
+            type: "project.created",
+            payload: {
+              projectId: otherProjectId,
+              title: "Other",
+              workspaceRoot: `${cwd}-other`,
+              defaultModelSelection: null,
+              scripts: [],
+              createdAt,
+              updatedAt: createdAt,
+            },
+          });
+          const moveRefused = yield* orchestrator
+            .dispatch({
+              type: "thread.project.move",
+              commandId: CommandId.make("command:handoff-releases-session:move"),
+              threadId: handoffThreadId,
+              projectId: otherProjectId,
+              clearWorktreePath: true,
+            })
+            .pipe(Effect.flip);
+          assert.include(String(moveRefused.cause), "background agents or commands");
           const unchanged = yield* orchestrator.getThreadProjection(handoffThreadId);
           assert.lengthOf(unchanged.runs, 1);
           assert.deepEqual(yield* Ref.get(closedSessions), []);

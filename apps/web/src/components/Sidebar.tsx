@@ -120,6 +120,7 @@ import {
   useAcknowledgeThreadWoke,
   useThreadActions,
 } from "../hooks/useThreadActions";
+import { readThreadMoveTargets, useMoveThreadToProject } from "../hooks/useMoveThreadToProject";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useOrderWhileOpen } from "../hooks/useOrderWhileOpen";
 import { useProjectPin } from "../hooks/useProjectGroupUpdate";
@@ -932,6 +933,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     archiveThread,
     deleteThread,
   } = useThreadActions();
+  const moveThreadToProject = useMoveThreadToProject();
   const updateThreadMetadata = useOrchestrationCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
   });
@@ -2632,6 +2634,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           timestampFormat,
           thread.environmentId,
         );
+        const moveTargets = readThreadMoveTargets(threadRef);
         const threadProjectGroup =
           projectGroupsRef.current.find((project) =>
             project.memberProjectRefs.some(
@@ -2667,6 +2670,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 canShareWithGuestAtom(threadRef.environmentId),
               ),
               canTurnIntoProject: canTurnThreadIntoProject(threadRef),
+              moveTargets,
               supports: {
                 settlement: configLoaded,
                 autoSettleOptOut: supportsAutoSettleOptOut,
@@ -2681,6 +2685,12 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         );
         if (clicked._tag === "Failure" || clicked.value === null) return;
         if (threadActionRequiresOperate(clicked.value) && !checkThreadOperations([thread])) return;
+        if (clicked.value.startsWith("move-to-project:")) {
+          const projectId = clicked.value.slice("move-to-project:".length);
+          const project = moveTargets.find((candidate) => candidate.id === projectId);
+          if (project) await moveThreadToProject(threadRef, project);
+          return;
+        }
         if (clicked.value?.startsWith("snooze:")) {
           const preset =
             clicked.value === "snooze:custom"

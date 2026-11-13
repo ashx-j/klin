@@ -1273,6 +1273,38 @@ it.effect("restores a checkpoint before the first commit without staging its fil
   }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
+it.effect("reads where HEAD was at a past moment from its reflog", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const driver = yield* GitVcsDriver.makeVcsDriverShape();
+    const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-head-at-" });
+    yield* runGit(cwd, ["init"]);
+    yield* runGit(cwd, ["config", "user.email", "test@test.com"]);
+    yield* runGit(cwd, ["config", "user.name", "Test"]);
+    // The reflog dates each entry with the committer date.
+    const commitAt = (seconds: number) =>
+      driver
+        .execute({
+          operation: "test",
+          cwd,
+          args: ["commit", "--allow-empty", "-m", String(seconds)],
+          env: { GIT_COMMITTER_DATE: `@${seconds} +0000` },
+        })
+        .pipe(
+          Effect.andThen(driver.execute({ operation: "test", cwd, args: ["rev-parse", "HEAD"] })),
+          Effect.map((result) => result.stdout.trim()),
+        );
+    const first = yield* commitAt(1_000);
+    const second = yield* commitAt(3_000);
+    const headAt = (at: number) => driver.checkpoints.resolveHeadAt({ cwd, at });
+
+    assert.deepEqual(yield* Effect.all([headAt(2_000), headAt(3_000)]), [first, second]);
+    yield* fileSystem.remove(path.join(cwd, ".git", "logs"), { recursive: true });
+    assert.isNull(yield* headAt(3_000));
+  }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
+);
+
 // The real VCS process, spawning `command` wherever the driver runs git.
 const vcsProcessSpawning = (command: string) =>
   Layer.effect(
