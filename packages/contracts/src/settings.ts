@@ -291,6 +291,21 @@ const LegacyConfirmQuit = Schema.Boolean.pipe(
 
 const QuitConfirmationModeSetting = Schema.Union([QuitConfirmationMode, LegacyConfirmQuit]);
 
+/** Why a typed skill-picker symbol is invalid, or null when it can be used. */
+export function skillTriggerCharacterError(value: string): string | null {
+  if (Array.from(value).length !== 1 || !/^[\p{P}\p{S}]$/u.test(value)) {
+    return "Choose one symbol, without spaces, letters, or numbers.";
+  }
+  if (value === "@" || value === "#" || value === "/") {
+    return "@, #, and / already open other composer menus.";
+  }
+  return null;
+}
+
+const SkillTriggerCharacter = Schema.String.check(
+  Schema.makeFilter((value) => skillTriggerCharacterError(value) ?? true),
+);
+
 export const FontFamilyPreference = Schema.String.check(Schema.isMaxLength(200));
 export type FontFamilyPreference = typeof FontFamilyPreference.Type;
 
@@ -520,6 +535,9 @@ export const ClientSettingsSchema = Schema.Struct({
   ),
   proactivePanelsEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   showSkillsInSlashMenu: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  skillTriggerCharacter: SkillTriggerCharacter.pipe(
+    Schema.withDecodingDefault(Effect.succeed("$")),
+  ),
   boringSidebarEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   boringSidebarMultilineRows: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(false)),
@@ -2054,6 +2072,7 @@ export const ClientSettingsPatch = Schema.Struct({
   followUpBehavior: Schema.optionalKey(Schema.Literals(["queue", "steer"])),
   proactivePanelsEnabled: Schema.optionalKey(Schema.Boolean),
   showSkillsInSlashMenu: Schema.optionalKey(Schema.Boolean),
+  skillTriggerCharacter: Schema.optionalKey(SkillTriggerCharacter),
   boringSidebarEnabled: Schema.optionalKey(Schema.Boolean),
   boringSidebarMultilineRows: Schema.optionalKey(Schema.Boolean),
   toolCallVisibility: Schema.optionalKey(ToolCallVisibility),

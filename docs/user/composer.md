@@ -276,6 +276,11 @@ Type `/` for commands or `$` to add a skill from the selected environment and
 provider. On mobile, both are also available before starting a thread on
 **New task**.
 
+If `$` is hard to reach on your keyboard layout, pick another symbol in
+**Settings → Chat → Skill trigger character**, for example `+`. Typing `+image`
+then finds the same skills as `$image`, and picking one still inserts it as
+`$name`. `@`, `#` and `/` can't be used because they open other menus.
+
 The slash menu also includes skills unless you turn off **Settings → Chat →
 Show skills in slash menu**, under Advanced. Only skills enabled for the provider are listed.
 

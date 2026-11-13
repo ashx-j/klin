@@ -745,6 +745,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["proactive automatically open diff pull request pr right panel agent completion"],
   },
   {
+    id: "skill-trigger-character",
+    title: "Skill trigger character",
+    to: "/settings/chat",
+    searchTerms: ["composer skill picker symbol dollar $ plus + keyboard layout"],
+  },
+  {
     id: "skills-in-slash-menu",
     title: "Show skills in slash menu",
     to: "/settings/chat",
