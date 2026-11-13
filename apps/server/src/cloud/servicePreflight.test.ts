@@ -98,6 +98,29 @@ it.layer(NodeServices.layer)("service preflight database", (it) => {
           .status,
       ).toBe("ready");
 
+      // So is the v0.1.2 preview history that recorded peer links as 68-70.
+      const peerPreview = path.join(path.dirname(databasePath), "peer-preview.sqlite");
+      const peerPreviewDb = new NodeSqlite.DatabaseSync(peerPreview);
+      peerPreviewDb.exec(
+        "CREATE TABLE effect_sql_migrations (migration_id INTEGER PRIMARY KEY, name TEXT)",
+      );
+      const insertPeerPreview = peerPreviewDb.prepare(
+        "INSERT INTO effect_sql_migrations VALUES (?, ?)",
+      );
+      for (const [id, name] of migrationManifest.filter(([id]) => id < 68)) {
+        insertPeerPreview.run(id, name);
+      }
+      insertPeerPreview.run(68, "PeerLinks");
+      insertPeerPreview.run(69, "PeerLinkFence");
+      insertPeerPreview.run(70, "WaitingLinkRequestIndex");
+      peerPreviewDb.close();
+      expect(
+        runServicePreflight({
+          databasePath: peerPreview,
+          launcherProtocol: SERVICE_LAUNCHER_PROTOCOL,
+        }).status,
+      ).toBe("ready");
+
       const newerId = Math.max(...migrationManifest.map(([id]) => id)) + 1;
       insert.run(newerId, "FromNightly");
       db.close();
