@@ -3783,13 +3783,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               >
                 <PluginPart
                   part="composer.controls"
+                  // Dictation on a compact footer takes the room these pieces would use.
                   pieces={{
                     original: defaultComposerFooter,
-                    attach: composerAttachButton,
-                    controls: composerControls,
-                    model: composerControlsBar("model"),
-                    effort: composerControlsBar("effort"),
-                    access: composerControlsBar("access"),
+                    attach: dictationTakesFooter ? null : composerAttachButton,
+                    controls: dictationTakesFooter ? null : composerControls,
+                    model: dictationTakesFooter ? null : composerControlsBar("model"),
+                    effort: dictationTakesFooter ? null : composerControlsBar("effort"),
+                    access: dictationTakesFooter ? null : composerControlsBar("access"),
                     actions: composerPrimaryActions,
                   }}
                 />
