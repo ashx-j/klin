@@ -65,6 +65,7 @@ import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
+import * as TaskFolderStore from "../workspace/TaskFolderStore.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
 import * as Orchestrator from "./Orchestrator.ts";
@@ -81,6 +82,7 @@ import { PULL_REQUEST_WATCH_WAKE_LIMIT } from "./pullRequestWatch.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
+import { layerNoTaskFolders } from "./ProviderTurnStartService.testkit.ts";
 import * as RuntimeLayer from "./runtimeLayer.ts";
 import { shellStreamItemFromThreadShell } from "./ShellStream.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
@@ -126,10 +128,13 @@ const layerVcsDriverRegistryTest = VcsDriverRegistry.layer.pipe(
 const layerCheckpointStoreTest = CheckpointStore.layer.pipe(
   Layer.provide(layerVcsDriverRegistryTest),
 );
-const layerGitWorkflowTest = Layer.mock(GitWorkflow.GitWorkflowService)({
-  pruneWorktrees: () => Effect.void,
-  createWorktree: () => Effect.succeed({} as never),
-});
+const layerGitWorkflowTest = Layer.merge(
+  Layer.mock(GitWorkflow.GitWorkflowService)({
+    pruneWorktrees: () => Effect.void,
+    createWorktree: () => Effect.succeed({} as never),
+  }),
+  layerNoTaskFolders,
+);
 const layerProjectServiceTest = Layer.mock(ProjectService.ProjectService)({
   getById: () => Effect.succeedNone,
 });
@@ -347,6 +352,7 @@ const layerTest = Layer.mergeAll(
   ProjectionStore.layer,
   EffectOutbox.layer,
   ThreadCommandExecutor.layer,
+  TaskFolderStore.layer,
 ).pipe(
   Layer.provide(McpSessionRegistryTestkit.layer),
   Layer.provide(McpProviderSessions.layer),
@@ -1528,6 +1534,31 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
             [],
           );
           assert.deepEqual(yield* outbox.listByCommandId(commandId), []);
+          if (status === "missing") {
+            // A task folder's linked project folder has no snapshot, even with nothing to restore.
+            const taskFolders = yield* TaskFolderStore.TaskFolderStore;
+            yield* taskFolders.put({
+              root: process.cwd(),
+              projectId: ProjectId.make("runtime-rollback-readiness-project"),
+              projectRoot: process.cwd(),
+              anchor: process.cwd(),
+              projectPath: process.cwd(),
+              projectIsWorktree: false,
+              repositories: [],
+            });
+            const linked = yield* orchestrator.dispatch({
+              type: "checkpoint.rollback",
+              commandId: CommandId.make("runtime-rollback-missing-linked"),
+              threadId,
+              checkpointId,
+              scopeId: scope.id,
+            });
+            assert.deepEqual(
+              linked.storedEvents.map((stored) => stored.event.type),
+              ["thread.metadata-updated", "checkpoint.rollback-requested"],
+            );
+            yield* taskFolders.remove(process.cwd());
+          }
         }
       }
     }).pipe(Effect.provide(Layer.fresh(layerTest))),
@@ -3451,6 +3482,83 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           ?.filter((link) => link.host === "git.cafe")
           .map((link) => link.url),
         [21353, 21354].map((number) => `https://git.cafe/pingdotgg/t3code/pulls/${number}`),
+      );
+    }),
+  );
+
+  it.effect("keeps the branch pull request beside one opened in another repository", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const projectId = ProjectId.make("repository-pr-project");
+      yield* seedProject({
+        projectId,
+        title: "Repository PR links",
+        workspaceRoot: "/workspace/repository-pr-links",
+        defaultModelSelection: null,
+        createdAt: "2026-09-17T00:00:00.000Z",
+      });
+      const linkedNumbers = Effect.fn("linkedNumbers")(function* (
+        id: string,
+        created: { readonly repository: string; readonly number: number },
+      ) {
+        const threadId = ThreadId.make(id);
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`${id}-create`),
+          threadId,
+          projectId,
+          title: "PR links",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: "feature/pr-links",
+          worktreePath: null,
+        });
+        const snapshot = yield* orchestrator.getShellSnapshot();
+        yield* orchestrator.dispatch({
+          type: "thread.pull-request.sync",
+          commandId: CommandId.make(`${id}-discover`),
+          threadId,
+          projectId,
+          snapshotSequence: snapshot.snapshotSequence,
+          expected: {
+            workspaceRoot: "/workspace/repository-pr-links",
+            branch: "feature/pr-links",
+            worktreePath: null,
+            linkedPullRequest: null,
+            branchPullRequest: null,
+          },
+          branchPullRequest: {
+            projectId,
+            repository: "pingdotgg/t3code",
+            number: 1,
+            url: "https://github.com/pingdotgg/t3code/pull/1",
+          },
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.pull-request.link",
+          commandId: CommandId.make(`${id}-link`),
+          threadId,
+          host: "github.com",
+          ...created,
+          url: `https://github.com/${created.repository}/pull/${created.number}`,
+          source: "created",
+        });
+        return (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.map(
+          (link) => `${link.repository}#${link.number}`,
+        );
+      });
+
+      assert.deepEqual(
+        yield* linkedNumbers("repository-pr-other", { repository: "pingdotgg/api", number: 7 }),
+        ["pingdotgg/t3code#1", "pingdotgg/api#7"],
+      );
+      // A branch that moved on to a new pull request does not drag the old one along.
+      assert.deepEqual(
+        yield* linkedNumbers("repository-pr-same", { repository: "pingdotgg/t3code", number: 2 }),
+        ["pingdotgg/t3code#2"],
       );
     }),
   );

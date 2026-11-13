@@ -14,12 +14,32 @@ import * as VcsProcess from "./VcsProcess.ts";
 export interface VcsCaptureCheckpointInput {
   readonly cwd: string;
   readonly checkpointRef: CheckpointRef;
+  /** Folders below `cwd` (relative, `/`-separated) that other checkpoints own, such as nested clones. */
+  readonly excludePaths?: ReadonlyArray<string>;
+  /** Also records what is staged, which a restore with `withIndex` puts back. */
+  readonly withIndex?: boolean;
+}
+
+export interface VcsCaptureHeadCheckpointInput {
+  readonly cwd: string;
+  readonly checkpointRef: CheckpointRef;
+  /** A commit `resolveCleanHead` returned for this folder. */
+  readonly head: string;
+  /**
+   * When the folder was seen clean, in epoch seconds, if that was earlier than now. Commits made
+   * after a checkpoint count as the turn's own work, so a late snapshot must not postdate them.
+   */
+  readonly seenAt?: number;
 }
 
 export interface VcsRestoreCheckpointInput {
   readonly cwd: string;
   readonly checkpointRef: CheckpointRef;
   readonly fallbackToHead?: boolean;
+  /** Folders below `cwd` the restore leaves as they are, as in a capture. */
+  readonly excludePaths?: ReadonlyArray<string>;
+  /** Puts back what a capture with `withIndex` recorded as staged, instead of resetting to HEAD. */
+  readonly withIndex?: boolean;
 }
 
 export const CHECKPOINT_DIFF_MAX_OUTPUT_BYTES = 10_000_000;
@@ -35,6 +55,8 @@ export interface VcsDiffCheckpointsInput {
   readonly maxOutputBytes?: number;
   /** An empty list yields an empty diff. */
   readonly filePaths?: ReadonlyArray<string>;
+  /** Folders below `cwd` left out of the diff, as in a capture. */
+  readonly excludePaths?: ReadonlyArray<string>;
 }
 
 export interface VcsListAuthoredPathsInput {
@@ -50,6 +72,20 @@ export interface VcsDeleteCheckpointRefsInput {
 
 export interface VcsCheckpointOps {
   readonly captureCheckpoint: (input: VcsCaptureCheckpointInput) => Effect.Effect<void, VcsError>;
+  /**
+   * HEAD's commit when the folder matches it exactly: nothing staged, modified or untracked.
+   * Null otherwise. One status, where a capture stages the whole worktree.
+   */
+  readonly resolveCleanHead: (cwd: string) => Effect.Effect<string | null, VcsError>;
+  /** HEAD's commit at `at`, in epoch seconds, from HEAD's reflog. Null without a reflog. */
+  readonly resolveHeadAt: (input: {
+    readonly cwd: string;
+    readonly at: number;
+  }) => Effect.Effect<string | null, VcsError>;
+  /** Snapshots a folder that was clean at `head` from that commit, without reading its files. */
+  readonly captureHeadCheckpoint: (
+    input: VcsCaptureHeadCheckpointInput,
+  ) => Effect.Effect<void, VcsError>;
   readonly hasCheckpointRef: (
     input: Omit<VcsRestoreCheckpointInput, "fallbackToHead">,
   ) => Effect.Effect<boolean, VcsError>;
