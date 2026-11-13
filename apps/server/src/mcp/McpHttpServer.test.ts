@@ -1773,6 +1773,11 @@ it.effect("lists optional tools to a deferring client only after tool_search loa
         tool("delegate_task", "Delegates a task."),
         tool("preview_open", "Opens a browser preview."),
         tool("schedule_task", "Schedules a task."),
+        // Like a disabled plugin's tool, which the server cannot remove.
+        tool("browser_extra", "Opens another browser.").annotate(
+          McpSchema.EnabledWhen,
+          () => false,
+        ),
       );
       const reads = McpToolAccess.reads(() => Effect.succeed({}));
       const serverLayer = McpHttpServer.layerMcpTransport(
@@ -1783,6 +1788,7 @@ it.effect("lists optional tools to a deferring client only after tool_search loa
               delegate_task: reads,
               preview_open: reads,
               schedule_task: reads,
+              browser_extra: reads,
             }),
           ),
           McpHttpServer.layerToolSearch,

@@ -1385,13 +1385,23 @@ export const layerTools = Layer.mergeAll(
   layerHtmlToolkit,
 );
 
+// No EnabledWhen in this server reads the client profile, which a search does not carry.
+const SEARCH_CLIENT_PROFILE = { protocolVersion: "", capabilities: {} };
+
 const layerToolExposure = Layer.effect(
   McpToolExposure.McpToolExposure,
   Effect.gen(function* () {
     const server = yield* McpServer.McpServer;
     return McpToolExposure.make(
       () =>
-        server.tools.map(({ tool }) => ({ name: tool.name, description: tool.description ?? "" })),
+        server.tools
+          // Search runs in the caller's request, where these predicates read the caller.
+          .filter(({ annotations }) =>
+            (Context.getOrUndefined(annotations, McpSchema.EnabledWhen) ?? (() => true))(
+              SEARCH_CLIENT_PROFILE,
+            ),
+          )
+          .map(({ tool }) => ({ name: tool.name, description: tool.description ?? "" })),
       () => server.notifications["notifications/tools/list_changed"]({}),
     );
   }),
