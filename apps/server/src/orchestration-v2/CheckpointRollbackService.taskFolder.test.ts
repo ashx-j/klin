@@ -579,17 +579,19 @@ it.live("rewinds a linked project folder's repositories to how each was before t
   ),
 );
 
-it.live("rewinds only the conversation when a linked project folder has no repository to restore", () =>
-  withThread({ projectIsRepository: false }, (thread) =>
-    Effect.gen(function* () {
-      yield* thread.turn(1, Effect.void);
-      yield* thread.turn(2, Effect.void);
+it.live(
+  "rewinds only the conversation when a linked project folder has no repository to restore",
+  () =>
+    withThread({ projectIsRepository: false }, (thread) =>
+      Effect.gen(function* () {
+        yield* thread.turn(1, Effect.void);
+        yield* thread.turn(2, Effect.void);
 
-      yield* thread.rewind(1);
+        yield* thread.rewind(1);
 
-      assert.deepEqual((yield* thread.recorded).runs, ["completed", "rolled_back"]);
-    }),
-  ),
+        assert.deepEqual((yield* thread.recorded).runs, ["completed", "rolled_back"]);
+      }),
+    ),
 );
 
 it.live("refuses a project folder whose own snapshot is missing, before any folder changes", () =>
