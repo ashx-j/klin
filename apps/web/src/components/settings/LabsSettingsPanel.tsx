@@ -2,6 +2,7 @@ import { useAuth } from "@clerk/react";
 import { Link } from "@tanstack/react-router";
 import { managedCapabilityDenial } from "@t3tools/contracts";
 
+import { APP_BASE_NAME } from "~/branding";
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 import { isElectron } from "~/env";
 import { isMacPlatform } from "~/lib/utils";
@@ -85,9 +86,9 @@ function KeepRunningInTrayRow() {
     <SettingsRow
       {...searchableSetting("keep-running-in-tray")}
       description={
-        "Closing the window keeps T3 Code running in the system tray, so agents and remote connections keep working. Open or quit it from the tray icon." +
+        `Closing the window keeps ${APP_BASE_NAME} running in the system tray, so agents, remote connections and thread notifications keep working. Open or quit it from the tray icon.` +
         (navigator.platform.toLowerCase().includes("linux")
-          ? " Linux requires system tray support. If no icon appears, launch T3 Code again to restore the window."
+          ? ` Linux requires system tray support. If no icon appears, launch ${APP_BASE_NAME} again to restore the window.`
           : "")
       }
       control={
