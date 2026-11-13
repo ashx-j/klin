@@ -152,8 +152,8 @@ describe("threadRepositorySections", () => {
   it("orders changed repositories by their latest turn, newest first", () => {
     expect(changed.map((entry) => entry.cwd)).toEqual([
       "/work/shared",
-      "/work/wrapper/web",
       "/work/wrapper/services/api",
+      "/work/wrapper/web",
     ]);
     // A baseline alone is no change: without a turn the repository sorts last, by name.
     expect(
@@ -161,6 +161,17 @@ describe("threadRepositorySections", () => {
         checkpoints: [
           checkpoint("web-0", "scope-web", 0, { runId: null }),
           checkpoint("api-1", "scope-api", 1),
+        ],
+        checkpointScopes: scopes,
+      }).map((entry) => entry.cwd),
+    ).toEqual(["/work/wrapper/services/api", "/work/shared", "/work/wrapper/web"]);
+    // A loaded thread lists checkpoints by scope, so their order is no timeline.
+    expect(
+      threadChangedRepositories({
+        checkpoints: [
+          checkpoint("api-2", "scope-api", 2),
+          checkpoint("shared-1", "scope-shared", 1),
+          checkpoint("web-1", "scope-web", 1),
         ],
         checkpointScopes: scopes,
       }).map((entry) => entry.cwd),
@@ -256,8 +267,8 @@ describe("threadRepositorySections", () => {
       taskFolder,
     });
     expect(sections.visible.map((section) => [section.key, section.cwd, section.origin])).toEqual([
-      ["/work/wrapper/web", "/wt/task/web", "worktree"],
       ["/work/wrapper/services/api", "/wt/task/services/api", "worktree"],
+      ["/work/wrapper/web", "/wt/task/web", "worktree"],
       ["/work/wrapper/docs", "/wt/task/docs", "worktree"],
     ]);
     expect(

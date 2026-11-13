@@ -407,17 +407,20 @@ const NO_SECTIONS: ThreadRepositorySections = Object.freeze({
 });
 
 /**
- * The repositories a thread changed, most recently changed first. A repository no turn has a
- * checkpoint for yet sorts last, by name.
+ * The repositories a thread changed, most recently changed first and by name within a turn. A
+ * repository no turn has a checkpoint for yet sorts last, by name.
  */
 export function threadChangedRepositories(
   projection: Pick<OrchestrationV2ThreadProjection, "checkpoints" | "checkpointScopes">,
 ): ReadonlyArray<ThreadRepositoryScope> {
   const scopes = threadRepositoryScopes(projection);
   if (scopes.length < 2) return scopes;
+  // Checkpoints come by scope, not by time; a repository checkpoint's ordinal is its run's.
   const lastChange = new Map<CheckpointScopeId, number>();
-  for (const [index, checkpoint] of projection.checkpoints.entries()) {
-    if (checkpoint.runId !== null) lastChange.set(checkpoint.scopeId, index);
+  for (const checkpoint of projection.checkpoints) {
+    if (checkpoint.runId === null) continue;
+    const latest = lastChange.get(checkpoint.scopeId) ?? -1;
+    lastChange.set(checkpoint.scopeId, Math.max(latest, checkpoint.ordinalWithinScope));
   }
   // `scopes` is by name already, and the sort is stable.
   return [...scopes].sort(
