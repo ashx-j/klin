@@ -3190,6 +3190,18 @@ describe("OpenCodeAdapterV2", () => {
       pattern: "/repos/api/*",
       action: "allow",
     });
+    // Patterns have no escape, so `/repos/api?/*` would also grant `/repos/api1`.
+    const wildcardFolders = openCodePermissionRules(
+      runtimePolicy("approval-required", {
+        workspace: { folders: [], extraRoots: ["/repos/api?", "/repos/web*", "/repos/docs"] },
+      }),
+    );
+    assert.deepEqual(
+      wildcardFolders.filter(
+        (rule) => rule.permission === "external_directory" && rule.action === "allow",
+      ),
+      [{ permission: "external_directory", pattern: "/repos/docs/*", action: "allow" }],
+    );
   });
 
   it("enforces non-interactive sandbox policy through OpenCode permissions", () => {

@@ -96,7 +96,11 @@ import {
 } from "@t3tools/provider-core/server/subagentProjection";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { turnScopedSelectionTransition } from "@t3tools/provider-core/server/selectionTransition";
-import { OPENCODE_PROVIDER, openCodePermissionRequestKind } from "../adapter.ts";
+import {
+  OPENCODE_PROVIDER,
+  openCodeExtraRootPatterns,
+  openCodePermissionRequestKind,
+} from "../adapter.ts";
 import { openCodeCommandFailed, openCodeToolTurnItem } from "../toolItems.ts";
 
 const NativeGoal = Schema.NullOr(
@@ -436,9 +440,9 @@ const sessionRules = (
         rule("edit", policy.runtimeMode === "auto-accept-edits" ? "allow" : "ask"),
         rule("external_directory", "ask"),
         // The thread's other folders count as workspace; `edit` still decides whether writes ask.
-        ...(policy.workspace?.extraRoots ?? []).map((root): Rule => ({
+        ...openCodeExtraRootPatterns(policy).map((resource): Rule => ({
           action: "external_directory",
-          resource: `${root.replace(/\/$/, "")}/*`,
+          resource,
           effect: "allow",
         })),
       ]),
