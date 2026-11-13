@@ -9786,6 +9786,14 @@ it.layer(layerThreadProjectMoveTest)("moving a thread to another project", (it) 
         createdBy: "user",
         creationSource: "web",
       });
+      // An earlier attempt that failed partway already moved the side chat.
+      yield* orchestrator.dispatch({
+        type: "thread.project.move",
+        commandId: CommandId.make("runtime-layer-move-root-side-chat-partial"),
+        threadId: sideChatId,
+        projectId: billing,
+        clearWorktreePath: false,
+      });
 
       const result = yield* move.move({ threadId, projectId: billing, byOwnAgent: false });
 
@@ -9923,6 +9931,91 @@ it.layer(layerThreadProjectMoveTest)("moving a thread to another project", (it) 
       yield* Fiber.join(moved);
 
       assert.equal((yield* shellOf(threadId))?.projectId, billing);
+    }),
+  );
+
+  it.effect("moves at turn end once a busy side chat finishes", () =>
+    Effect.gen(function* () {
+      const move = yield* ThreadProjectMove.ThreadProjectMove;
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const app = yield* project("app", `${MOVE_ROOT}/app`);
+      const billing = yield* project("billing", `${MOVE_ROOT}/billing`);
+      const threadId = yield* thread("busy-follower", app, null);
+      const sideChatId = ThreadId.make("runtime-layer-move-busy-follower-side-chat");
+      yield* orchestrator.dispatch({
+        type: "thread.fork",
+        commandId: CommandId.make("runtime-layer-move-busy-follower-side-chat"),
+        sourceThreadId: threadId,
+        targetThreadId: sideChatId,
+        sourcePoint: { type: "latest_stable" },
+        sideChat: true,
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const startRun = (target: ThreadId, name: string) =>
+        Effect.gen(function* () {
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make(`runtime-layer-move-${name}-message`),
+            threadId: target,
+            messageId: MessageId.make(`runtime-layer-move-${name}-message`),
+            text: "Keep working.",
+            attachments: [],
+            modelSelection,
+            dispatchMode: { type: "start_immediately" },
+          });
+          const run = (yield* orchestrator.getThreadProjection(target)).runs[0];
+          if (run === undefined) return yield* Effect.die(new Error("Run missing."));
+          return run;
+        });
+      const complete = (target: ThreadId, run: OrchestrationV2Run, name: string) =>
+        Effect.gen(function* () {
+          const now = yield* DateTime.now;
+          yield* eventSink.write({
+            commandId: CommandId.make(`runtime-layer-move-${name}-completed`),
+            events: [
+              {
+                id: EventId.make(`runtime-layer-move-${name}-completed`),
+                type: "run.updated",
+                threadId: target,
+                runId: run.id,
+                occurredAt: now,
+                payload: { ...run, status: "completed", startedAt: now, completedAt: now },
+              },
+            ],
+          });
+        });
+      const parentRun = yield* startRun(threadId, "busy-follower-parent");
+      const sideChatRun = yield* startRun(sideChatId, "busy-follower-side-chat");
+
+      const moved = yield* orchestrator
+        .streamStoredEventsFrom({
+          threadId,
+          afterSequence: 0,
+          eventType: "thread.metadata-updated",
+        })
+        .pipe(
+          Stream.filter(
+            ({ event }) =>
+              event.type === "thread.metadata-updated" && event.payload.projectId === billing,
+          ),
+          Stream.runHead,
+          Effect.forkChild,
+        );
+      assert.isTrue(
+        (yield* move.move({ threadId, projectId: billing, byOwnAgent: true })).movesWhenTurnEnds,
+      );
+      yield* complete(threadId, parentRun, "busy-follower-parent");
+      // The side chat still works, so the move waits for it instead of the parent's next run.
+      assert.equal((yield* shellOf(threadId))?.projectId, app);
+      yield* complete(sideChatId, sideChatRun, "busy-follower-side-chat");
+      yield* Fiber.join(moved);
+
+      assert.equal((yield* shellOf(threadId))?.projectId, billing);
+      assert.equal((yield* shellOf(sideChatId))?.projectId, billing);
     }),
   );
 });

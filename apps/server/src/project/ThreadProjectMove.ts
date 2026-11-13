@@ -91,28 +91,29 @@ const make = Effect.gen(function* () {
     );
 
   // Side chats and subagents live in the thread's view and work where it works.
-  const followersOf = Effect.fn("ThreadProjectMove.followersOf")(function* (
-    thread: OrchestrationV2ThreadShell,
-  ) {
-    const family = yield* Effect.flatten(threads.readShellSnapshot({ familyOf: thread.id }));
-    const members = [...family.threads, ...family.archivedThreads];
-    const inside = new Set([thread.id]);
-    const followers: Array<OrchestrationV2ThreadShell> = [];
-    for (let grew = true; grew;) {
-      grew = false;
-      for (const member of members) {
-        const parent = member.lineage.parentThreadId;
-        if (inside.has(member.id) || parent === null || !inside.has(parent)) continue;
-        if (isListedThreadLineage(member.lineage)) continue;
-        inside.add(member.id);
-        grew = true;
-        if (member.worktreePath === null || member.worktreePath === thread.worktreePath) {
-          followers.push(member);
+  const followersOf = Effect.fn("ThreadProjectMove.followersOf")(
+    function* (thread: OrchestrationV2ThreadShell) {
+      const family = yield* Effect.flatten(threads.readShellSnapshot({ familyOf: thread.id }));
+      const members = [...family.threads, ...family.archivedThreads];
+      const inside = new Set([thread.id]);
+      const followers: Array<OrchestrationV2ThreadShell> = [];
+      for (let grew = true; grew;) {
+        grew = false;
+        for (const member of members) {
+          const parent = member.lineage.parentThreadId;
+          if (inside.has(member.id) || parent === null || !inside.has(parent)) continue;
+          if (isListedThreadLineage(member.lineage)) continue;
+          inside.add(member.id);
+          grew = true;
+          if (member.worktreePath === null || member.worktreePath === thread.worktreePath) {
+            followers.push(member);
+          }
         }
       }
-    }
-    return followers;
-  });
+      return followers;
+    },
+    Effect.mapError(fail("Could not read the thread's side chats and subagents.")),
+  );
 
   const move: ThreadProjectMove["Service"]["move"] = Effect.fn("ThreadProjectMove.move")(
     function* (input) {
@@ -128,9 +129,13 @@ const make = Effect.gen(function* () {
         );
       }
       if (thread.projectId === input.projectId) {
-        // A retry after the thread moved but its tasks did not.
+        // A retry after the thread moved but its tasks did not. Followers move before the thread.
+        const family = [...(yield* followersOf(thread)), thread];
         yield* scheduledTasks
-          .moveThreadTasks({ threadIds: [thread.id], projectId: input.projectId })
+          .moveThreadTasks({
+            threadIds: family.map((member) => member.id),
+            projectId: input.projectId,
+          })
           .pipe(Effect.mapError(fail("Could not move the thread's scheduled tasks.")));
         return { projectId: input.projectId, worktreePath: thread.worktreePath };
       }
@@ -178,8 +183,9 @@ const make = Effect.gen(function* () {
             return yield* refuse(`"${member.title}" is still working. Finish or stop it first.`);
           }
         }
+        // A retry after a partial move skips the followers that already moved.
         yield* Effect.forEach(
-          members,
+          members.filter((member) => member.projectId !== input.projectId),
           (member) =>
             Effect.gen(function* () {
               yield* threads.dispatch({
@@ -206,6 +212,10 @@ const make = Effect.gen(function* () {
       // The agent asking is the turn that is running, so the move waits for the thread to be idle.
       if (input.byOwnAgent && thread.activeRunId !== null) {
         const runId = thread.activeRunId;
+        const family = new Set([
+          thread.id,
+          ...(yield* followersOf(thread)).map((member) => member.id),
+        ]);
         const attempt = apply.pipe(
           Effect.as(true),
           Effect.orElseSucceed(() => false),
@@ -227,16 +237,13 @@ const make = Effect.gen(function* () {
             );
           }
           const afterSequence = yield* orchestrator.getThreadEventSequence(thread.id);
-          // A queued message may start first; try again whenever a run changes.
+          // A queued message or a busy follower may hold it; try again whenever one of their runs changes.
           yield* Stream.fromEffect(attempt).pipe(
             Stream.concat(
-              orchestrator
-                .streamStoredEventsFrom({
-                  threadId: thread.id,
-                  afterSequence,
-                  eventType: "run.updated",
-                })
-                .pipe(Stream.mapEffect(() => attempt)),
+              orchestrator.streamStoredEventsFrom({ afterSequence, eventType: "run.updated" }).pipe(
+                Stream.filter(({ event }) => family.has(event.threadId)),
+                Stream.mapEffect(() => attempt),
+              ),
             ),
             Stream.filter((moved) => moved),
             Stream.runHead,

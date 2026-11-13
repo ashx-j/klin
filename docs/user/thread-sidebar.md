@@ -51,8 +51,9 @@ Pick **Move to project** from a thread's menu or the command palette. From its
 next turn the thread works in the new project's folder. A thread in a worktree
 keeps its worktree, so it can only move to a project in the same repository. A
 thread without a project leaves its folder behind, and the files stay there.
-Stop a running thread before you move it. You can also ask a thread's agent to
-move its own thread; the move happens when its turn ends.
+Stop a running thread, and any background agents or commands it left running,
+before you move it. You can also ask a thread's agent to move its own thread;
+the move happens when its turn ends.
 
 ### Start in the background
 

@@ -5307,9 +5307,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           cause: `Thread ${command.threadId} ${cause}`,
         });
       const projection = yield* projectionStore
-        .getThreadRecords(command.threadId, ["runs", "runtimeRequests", "providerSessions"], {
-          turnItemTypes: [],
-        })
+        .getThreadRecords(
+          command.threadId,
+          ["runs", "runtimeRequests", "providerSessions", "providerThreads"],
+          { turnItemTypes: [] },
+        )
         .pipe(
           Effect.mapError(
             (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
@@ -5335,6 +5337,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const worktreePath = command.clearWorktreePath ? null : thread.worktreePath;
       const cwdBefore = thread.worktreePath ?? Option.getOrUndefined(source)?.workspaceRoot;
       const cwdAfter = worktreePath ?? target.value.workspaceRoot;
+      const liveSessions = projection.providerSessions.filter(
+        (session) => session.status !== "stopped" && session.status !== "error",
+      );
+      if (cwdAfter !== cwdBefore) {
+        for (const session of liveSessions) {
+          if (yield* sessionHasBackgroundWork(session, projection.providerThreads)) {
+            return yield* reject(
+              "still runs background agents or commands, and moving it would end them. Wait for them to finish, or press Stop, then try again.",
+            );
+          }
+        }
+      }
       const now = yield* DateTime.now;
       yield* emit(
         events,
@@ -5356,8 +5370,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       if (cwdAfter === cwdBefore) return;
       // The next turn has to start a session in the new folder, as after a worktree change.
       const reason = "Workspace changed.";
-      for (const session of projection.providerSessions) {
-        if (session.status === "stopped" || session.status === "error") continue;
+      for (const session of liveSessions) {
         yield* emit(
           events,
           command,
