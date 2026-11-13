@@ -45,6 +45,7 @@ import * as ProjectStore from "./ProjectStore.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
+import { layerNoTaskFolders } from "./ProviderTurnStartService.testkit.ts";
 
 const unrelatedProject = Option.some({
   workspaceRoot: "/nonexistent/t3-rollback-project",
@@ -53,6 +54,7 @@ const layerCheckpointRollbackService = CheckpointRollbackService.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
       NodeServices.layer,
+      layerNoTaskFolders,
       Layer.mock(ServerConfig.ServerConfig)({ worktreesDir: "/synthetic-worktrees" } as never),
       ServerSettings.layerTest(),
       Layer.mock(GitWorkflow.GitWorkflowService)({}),
@@ -232,6 +234,7 @@ it.effect.each([
         Layer.mergeAll(
           ThreadCommandExecutor.layer,
           NodeServices.layer,
+          layerNoTaskFolders,
           Layer.mock(ServerConfig.ServerConfig)({ worktreesDir } as never),
           ServerSettings.layerTest(),
           Layer.mock(ProjectStore.ProjectStoreV2)({
@@ -449,6 +452,7 @@ it.effect.each([{ restoreFiles: true }, { restoreFiles: false }])(
           Layer.mergeAll(
             ThreadCommandExecutor.layer,
             NodeServices.layer,
+            layerNoTaskFolders,
             Layer.mock(ServerConfig.ServerConfig)({ worktreesDir } as never),
             ServerSettings.layerTest(),
             Layer.mock(ProjectStore.ProjectStoreV2)({
@@ -461,6 +465,7 @@ it.effect.each([{ restoreFiles: true }, { restoreFiles: false }])(
                   Effect.andThen(Deferred.await(releaseRestore)),
                   Effect.andThen(Effect.sync(() => calls.push("files"))),
                 ),
+              discardRepositorySnapshots: () => Effect.void,
             }),
             Layer.mock(EventSink.EventSinkV2)({ write: () => Effect.succeed([]) }),
             IdAllocator.layer,
@@ -790,9 +795,11 @@ const seedRollbackHistory = Effect.gen(function* () {
         ThreadCommandExecutor.layer,
         IdAllocator.layer,
         Layer.mock(CheckpointService.CheckpointServiceV2)({
-          restore: ({ checkpoint }) =>
+          restore: ({ targets }) =>
             Effect.sync(() => {
-              restored.push(checkpoint.id);
+              restored.push(
+                ...targets.map((target) => checkpointId(target.checkpoint.ordinalWithinScope)),
+              );
             }),
           deleteStaleRefs: ({ checkpoints }) =>
             Effect.sync(() => {

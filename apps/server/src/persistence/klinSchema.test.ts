@@ -28,6 +28,7 @@ layer("ensureKlinSchema", (it) => {
       assert.deepStrictEqual(yield* sql`SELECT tracked_folders_json FROM projection_projects`, [
         { tracked_folders_json: "[]" },
       ]);
+      assert.deepStrictEqual(yield* sql`SELECT COUNT(*) AS count FROM task_folders`, [{ count: 0 }]);
     }),
   );
 });

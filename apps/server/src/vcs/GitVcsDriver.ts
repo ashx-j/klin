@@ -1494,11 +1494,13 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       if (!commitOid) {
         return false;
       }
+      // Folders with checkpoints of their own are another restore's to change.
+      const scope = [".", ...excludedPathspecs(input.excludePaths)];
 
       const tracked = yield* execute({
         operation,
         cwd: input.cwd,
-        args: ["ls-files", "--cached", `--with-tree=${commitOid}`, "-z", "--", "."],
+        args: ["ls-files", "--cached", `--with-tree=${commitOid}`, "-z", "--", ...scope],
       });
       // An empty index and checkpoint have nothing for git restore's pathspec to match.
       if (tracked.stdout.length > 0) {
@@ -1513,7 +1515,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
             "--worktree",
             "--staged",
             "--",
-            ".",
+            ...scope,
           ],
         });
       }
@@ -1536,14 +1538,14 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         yield* execute({
           operation,
           cwd: input.cwd,
-          args: [...longPaths, "reset", "--quiet", "--", "."],
+          args: [...longPaths, "reset", "--quiet", "--", ...scope],
         });
       });
       yield* recreateWorkspace;
       const clean = execute({
         operation,
         cwd: input.cwd,
-        args: [...longPaths, "clean", "-fd", "--", "."],
+        args: [...longPaths, "clean", "-fd", "--", ...scope],
         env: { LC_ALL: "C" },
         allowNonZeroExit: true,
       });
@@ -1562,7 +1564,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         const remaining = yield* execute({
           operation,
           cwd: input.cwd,
-          args: [...longPaths, "clean", "-dn", "--", "."],
+          args: [...longPaths, "clean", "-dn", "--", ...scope],
           env: { LC_ALL: "C" },
         });
         if (/^Would remove /m.test(remaining.stdout)) {
