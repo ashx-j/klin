@@ -20,6 +20,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Metric from "effect/Metric";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import { TestClock } from "effect/testing";
@@ -349,12 +350,21 @@ it.layer(layerTest)("ProjectService", (it) => {
   it.effect("keeps a valid tracked folder list and refuses the others", () =>
     Effect.gen(function* () {
       const service = yield* ProjectService.ProjectService;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
       const projectId = ProjectId.make("project:tracked-folders");
-      const folder = (path: string) => ({ path, name: "Folder" });
+      const folder = (folderPath: string) => ({ path: folderPath, name: "Folder" });
+      // Its own path holds no part of the project; the folder it leads to holds all of it.
+      const rootLink = path.join(
+        yield* fileSystem.makeTempDirectoryScoped({ prefix: "project-tracked-" }),
+        "root-link",
+      );
+      yield* fileSystem.symlink(path.parse(rootLink).root, rootLink);
       const invalid = [
         ["relative", [folder("sibling")]],
         ["own-folder", [folder("/work/tracked/app/")]],
         ["parent", [folder("/work/tracked")]],
+        ["parent-link", [folder(rootLink)]],
         ["duplicate", [folder("/work/tracked/api"), folder("/work/tracked/api/")]],
       ] as const;
       const create = (key: string, trackedFolders: ReadonlyArray<ProjectTrackedFolder>) =>
@@ -399,7 +409,7 @@ it.layer(layerTest)("ProjectService", (it) => {
         tracked,
       );
       assert.deepEqual((yield* update("clear", { trackedFolders: [] })).trackedFolders, []);
-    }),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("records the outcome and duration of a committed project command", () =>

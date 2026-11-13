@@ -268,29 +268,40 @@ export const make = Effect.gen(function* () {
         );
   };
 
-  // Checked under the project lock, so concurrent edits cannot combine into a folder that holds the project.
-  const trackedFoldersProblem = (
+  // Missing paths keep their spelling.
+  const realPath = (target: string) =>
+    fileSystem.realPath(target).pipe(Effect.orElseSucceed(() => target));
+
+  // Checked under the project lock, so concurrent edits cannot combine into a folder that holds the
+  // project. Paths compare as named and as resolved, so a symlink cannot hide a parent.
+  const trackedFoldersProblem = Effect.fn("ProjectService.trackedFoldersProblem")(function* (
     command: ProjectCommand,
     project: ProjectStore.ProjectRow | undefined,
-  ) => {
+  ) {
     if (command.type === "project.delete") return undefined;
     if (command.workspaceRoot === undefined && command.trackedFolders === undefined)
       return undefined;
     const current = command.type === "project.meta.update" ? project : undefined;
     const workspaceRoot = command.workspaceRoot ?? current?.workspaceRoot;
     if (workspaceRoot === undefined) return undefined;
+    const realRoot = yield* realPath(workspaceRoot);
     const seen = new Set<string>();
     for (const { path: folderPath } of command.trackedFolders ?? current?.trackedFolders ?? []) {
-      if (isWithinRoot(path, workspaceRoot, folderPath)) {
-        return folderPath === workspaceRoot
-          ? "The project's own folder is always part of it; track other folders."
-          : `Tracked folder '${folderPath}' contains the project's own folder.`;
+      const realFolder = yield* realPath(folderPath);
+      if (folderPath === workspaceRoot || realFolder === realRoot) {
+        return "The project's own folder is always part of it; track other folders.";
       }
-      if (seen.has(folderPath)) return `Tracked folder '${folderPath}' is listed twice.`;
-      seen.add(folderPath);
+      if (
+        isWithinRoot(path, workspaceRoot, folderPath) ||
+        isWithinRoot(path, realRoot, realFolder)
+      ) {
+        return `Tracked folder '${folderPath}' contains the project's own folder.`;
+      }
+      if (seen.has(realFolder)) return `Tracked folder '${folderPath}' is listed twice.`;
+      seen.add(realFolder);
     }
     return undefined;
-  };
+  });
 
   const commit = Effect.fn("ProjectService.commit")(function* (command: ProjectCommand) {
     const { projectId } = command;
@@ -311,19 +322,19 @@ export const make = Effect.gen(function* () {
       const eventId = yield* idAllocator.allocate
         .event({ commandId: command.commandId })
         .pipe(Effect.mapError(dispatchError));
-      const planned = planProjectCommand({
+      const plan = planProjectCommand({
         command,
         state: { project, workspaceOwner },
         eventId,
         now,
-      }).pipe(
-        Result.flatMap((event) => {
-          const detail = trackedFoldersProblem(command, project);
-          return detail === undefined
-            ? Result.succeed(event)
-            : Result.fail(new ProjectCommandInvariantError({ commandType: command.type, detail }));
-        }),
-      );
+      });
+      const detail = Result.isSuccess(plan)
+        ? yield* trackedFoldersProblem(command, project)
+        : undefined;
+      const planned =
+        detail === undefined
+          ? plan
+          : Result.fail(new ProjectCommandInvariantError({ commandType: command.type, detail }));
       if (Result.isSuccess(planned)) {
         const { receipt } = yield* eventSink.commitProjectCommand({
           commandId: command.commandId,

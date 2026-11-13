@@ -23,6 +23,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
+import { isFilesystemRoot } from "../worktreesDirectory.ts";
 import { isWithinRoot } from "./KnownWorkspaces.ts";
 import * as TaskFolderStore from "./TaskFolderStore.ts";
 
@@ -254,25 +255,43 @@ const make = Effect.gen(function* () {
   const classifyAll = (folders: ReadonlyArray<ProjectTrackedFolder>) =>
     Effect.forEach(folders, classify, { concurrency: DETECTION_CONCURRENCY });
 
+  // A folder that now resolves to a filesystem root or to a folder holding `cwd`, such as one
+  // replaced by a symlink after it was tracked, is left out rather than granted.
+  const workspaceFor = Effect.fnUntraced(function* (
+    folders: ReadonlyArray<ThreadFolder>,
+    cwd: string,
+  ): Effect.fn.Return<ThreadWorkspace> {
+    const resolved = yield* Effect.forEach(
+      folders,
+      (folder) => realPath(folder.path).pipe(Effect.map((real) => ({ folder, real }))),
+      { concurrency: DETECTION_CONCURRENCY },
+    );
+    const reachable = resolved.filter(
+      ({ real }) => !isFilesystemRoot(real, path) && !isWithinRoot(path, cwd, real),
+    );
+    return {
+      folders: reachable.map(({ folder }) => folder),
+      // Both spellings are granted: agents are told the stored path, sandboxes check the real one.
+      extraRoots: [
+        ...new Set(
+          reachable.flatMap(({ folder, real }) =>
+            isWithinRoot(path, real, cwd) ? [] : [folder.path, real],
+          ),
+        ),
+      ],
+    };
+  });
+
   // A task folder's worktrees stand in for the tracked folders: the thread is told about, granted
   // and checkpoints only those, never the checkouts they were made from.
   const forTaskFolder = Effect.fnUntraced(function* (worktreePath: string, taskFolder: TaskFolder) {
-    const cwd = yield* realPath(worktreePath);
     const folders = taskFolder.repositories.map((repository) => ({
       name: repository.name,
       path: repository.worktreePath,
       isGitRepository: true,
       repositoryPath: repository.repositoryPath,
     }));
-    const outside = yield* Effect.forEach(
-      folders,
-      (folder) =>
-        realPath(folder.path).pipe(
-          Effect.map((real) => (isWithinRoot(path, real, cwd) ? [] : [folder.path, real])),
-        ),
-      { concurrency: DETECTION_CONCURRENCY },
-    );
-    return { folders, extraRoots: [...new Set(outside.flat())] };
+    return yield* workspaceFor(folders, yield* realPath(worktreePath));
   });
 
   const forThread: WorkspaceFolders["Service"]["forThread"] = Effect.fn(
@@ -297,17 +316,7 @@ const make = Effect.gen(function* () {
         ? []
         : [{ name: folder.name, path: folder.path, isGitRepository: folder.state === "git" }],
     );
-    const projectRoot = yield* realPath(project.workspaceRoot);
-    // Both spellings are granted: agents are told the stored path, sandboxes check the real one.
-    const outside = yield* Effect.forEach(
-      folders,
-      (folder) =>
-        realPath(folder.path).pipe(
-          Effect.map((real) => (isWithinRoot(path, real, projectRoot) ? [] : [folder.path, real])),
-        ),
-      { concurrency: DETECTION_CONCURRENCY },
-    );
-    return { folders, extraRoots: [...new Set(outside.flat())] };
+    return yield* workspaceFor(folders, yield* realPath(project.workspaceRoot));
   });
 
   const list: WorkspaceFolders["Service"]["list"] = Effect.fn("WorkspaceFolders.list")(

@@ -150,10 +150,13 @@ it.layer(NodeServices.layer)("WorkspaceFolders", (it) => {
       const missing = folder("gone", "gone");
       const linked = folder("shared", "app", "linked");
       const shared = path.join(tmp, "shared");
+      // Retargeted after it was tracked, to a folder that holds the project.
+      const parent = folder("parent", "app", "parent-link");
       for (const directory of [inside.path, path.join(repository.path, ".git"), shared]) {
         yield* fileSystem.makeDirectory(directory, { recursive: true });
       }
       yield* fileSystem.symlink(shared, linked.path);
+      yield* fileSystem.symlink(tmp, parent.path);
 
       yield* Effect.gen(function* () {
         const workspaceFolders = yield* WorkspaceFolders.WorkspaceFolders;
@@ -163,6 +166,7 @@ it.layer(NodeServices.layer)("WorkspaceFolders", (it) => {
             { ...repository, state: "git" },
             { ...missing, state: "missing" },
             { ...linked, state: "plain" },
+            { ...parent, state: "plain" },
           ],
         });
         assert.deepEqual(yield* workspaceFolders.forThread({ projectId, worktreePath: null }), {
@@ -180,7 +184,10 @@ it.layer(NodeServices.layer)("WorkspaceFolders", (it) => {
         );
       }).pipe(
         Effect.provide(
-          layerFor({ workspaceRoot, trackedFolders: [inside, repository, missing, linked] }),
+          layerFor({
+            workspaceRoot,
+            trackedFolders: [inside, repository, missing, linked, parent],
+          }),
         ),
       );
     }),
