@@ -22,6 +22,7 @@ import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import type * as ServerConfig from "../config.ts";
 import type * as ServerSettings from "../serverSettings.ts";
 import { makeIsManagedWorktreePath } from "../worktreesDirectory.ts";
+import { makeRecreateMissingWorktree } from "../workspace/restoreMissingWorktree.ts";
 import * as TaskFolders from "../workspace/TaskFolders.ts";
 import {
   withCheckpointRestoreReservation,
@@ -143,6 +144,7 @@ export const layer: Layer.Layer<
     const taskFolders = yield* TaskFolders.TaskFolders;
     const threadCommands = yield* ThreadCommandExecutor.ThreadCommandExecutor;
     const isManagedWorktreePath = yield* makeIsManagedWorktreePath;
+    const recreateMissingWorktree = yield* makeRecreateMissingWorktree;
 
     const execute = Effect.fn("orchestrationV2.checkpointRollback.execute")(function* (input: {
       readonly threadId: ThreadId;
@@ -253,15 +255,11 @@ export const layer: Layer.Layer<
         yield* taskFolders.restore({
           taskFolder,
           recreate: (checkout) =>
-            gitWorkflow.pruneWorktrees({ cwd: checkout.repositoryPath }).pipe(
-              Effect.andThen(
-                gitWorkflow.createWorktree({
-                  cwd: checkout.repositoryPath,
-                  refName: branch,
-                  path: checkout.worktreePath,
-                }),
-              ),
-            ),
+            recreateMissingWorktree({
+              cwd: checkout.repositoryPath,
+              worktreePath: checkout.worktreePath,
+              branch,
+            }),
         });
       } else if (worktreePath != null && branch != null) {
         // Recreated only where the server would have made it, as turn start does.

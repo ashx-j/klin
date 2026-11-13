@@ -135,9 +135,24 @@ const layerFor = (state: State, options: Options) => {
   const layerWorkflow = Layer.unwrap(
     Effect.gen(function* () {
       const git = yield* GitVcsDriver.GitVcsDriver;
+      const output = (cwd: string, args: ReadonlyArray<string>) =>
+        git
+          .execute({ operation: "rewind-test", cwd, args, allowNonZeroExit: true })
+          .pipe(Effect.map((result) => (result.exitCode === 0 ? result.stdout.trim() : null)));
       return Layer.mock(GitWorkflow.GitWorkflowService)({
         createWorktree: git.createWorktree,
         pruneWorktrees: git.pruneWorktrees,
+        listLocalBranchNames: git.listLocalBranchNames,
+        resolvePrimaryRemoteName: git.resolvePrimaryRemoteName,
+        hasCommit: ({ cwd, refName }) =>
+          output(cwd, ["rev-parse", "--verify", "--quiet", `${refName}^{commit}`]).pipe(
+            Effect.map((commit) => commit !== null),
+          ),
+        invalidateLocalStatus: () => Effect.void,
+        localStatus: ({ cwd }) =>
+          output(cwd, ["symbolic-ref", "--short", "--quiet", "HEAD"]).pipe(
+            Effect.map((refName) => ({ refName }) as never),
+          ),
       });
     }),
   ).pipe(Layer.provide(layerGit));
@@ -684,6 +699,9 @@ it.live.each([{ projectIsRepository: true }, { projectIsRepository: false }])(
         });
         assert.deepEqual(removal.kept, []);
         assert.isFalse(yield* fileSystem.exists(taskFolder.root));
+        // The thread's branch can go too, for example deleted after its work merged.
+        const web = taskFolder.repositories.find((repository) => repository.name === "web")!;
+        yield* thread.run(web.repositoryPath, "branch", "-D", branch);
 
         yield* thread.rewind(1);
 

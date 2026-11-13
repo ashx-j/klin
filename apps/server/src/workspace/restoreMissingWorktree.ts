@@ -41,12 +41,12 @@ interface WorktreeThread {
   readonly branch: string | null;
 }
 
-export const makeRestoreMissingWorktree = Effect.gen(function* () {
-  const fileSystem = yield* FileSystem.FileSystem;
+/**
+ * Checks `branch` out at `worktreePath` again, from `cwd`'s repository. A branch that is gone
+ * starts again from its pushed commit, or else from where the repository is.
+ */
+export const makeRecreateMissingWorktree = Effect.gen(function* () {
   const gitWorkflow = yield* GitWorkflowService.GitWorkflowService;
-  const projects = yield* ProjectService.ProjectService;
-  const isManagedWorktreePath = yield* makeIsManagedWorktreePath;
-  const taskFolders = yield* TaskFolders.TaskFolders;
 
   const resolveRecreateBase = Effect.fn("restoreMissingWorktree.resolveRecreateBase")(function* (
     cwd: string,
@@ -75,7 +75,7 @@ export const makeRestoreMissingWorktree = Effect.gen(function* () {
     return null;
   });
 
-  const recreateMissingWorktree = Effect.fn("restoreMissingWorktree.recreate")(function* (input: {
+  return Effect.fn("restoreMissingWorktree.recreate")(function* (input: {
     readonly cwd: string;
     readonly worktreePath: string;
     readonly branch: string;
@@ -113,6 +113,14 @@ export const makeRestoreMissingWorktree = Effect.gen(function* () {
       path: worktreePath,
     });
   });
+});
+
+export const makeRestoreMissingWorktree = Effect.gen(function* () {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const projects = yield* ProjectService.ProjectService;
+  const isManagedWorktreePath = yield* makeIsManagedWorktreePath;
+  const taskFolders = yield* TaskFolders.TaskFolders;
+  const recreateMissingWorktree = yield* makeRecreateMissingWorktree;
 
   return Effect.fn("restoreMissingWorktree")(function* (thread: WorktreeThread) {
     const { worktreePath, branch } = thread;
