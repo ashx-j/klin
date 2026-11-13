@@ -742,7 +742,13 @@ export const layer: Layer.Layer<
           if (!exists) return yield* Effect.flip(failed(target, "Checkpoint ref is unavailable."));
         }
         const nested = yield* resolveNestedScopePaths(input.scopes);
+        // Named per attempt, so a snapshot an earlier failed rewind kept is not overwritten.
+        const attempt = yield* Clock.currentTimeMillis;
         const snapshots: Array<Omit<CheckpointStore.RestoreCheckpointInput, "fallbackToHead">> = [];
+        const discard = (snapshot: (typeof snapshots)[number]) =>
+          checkpointStore
+            .deleteCheckpointRefs({ cwd: snapshot.cwd, checkpointRefs: [snapshot.checkpointRef] })
+            .pipe(Effect.ignore);
         yield* Effect.forEach(
           input.targets,
           (target) =>
@@ -754,7 +760,7 @@ export const layer: Layer.Layer<
                   cwd: target.scope.cwd,
                   ...(excludePaths === undefined ? {} : { excludePaths }),
                 };
-                const preRewindRef = yield* scopeRef(target.scope.id, "pre-rewind").pipe(
+                const preRewindRef = yield* scopeRef(target.scope.id, `pre-rewind-${attempt}`).pipe(
                   Effect.provideService(Digest.Digest, crypto),
                 );
                 yield* checkpointStore.captureCheckpoint({
@@ -774,35 +780,28 @@ export const layer: Layer.Layer<
             ).pipe(Effect.catch((cause) => Effect.flip(failed(target, cause)))),
           { discard: true },
         ).pipe(
-          Effect.onError(() =>
-            Effect.forEach(
-              snapshots.toReversed(),
-              (snapshot) =>
-                withWorkspaceLock(snapshot.cwd, checkpointStore.restoreCheckpoint(snapshot)).pipe(
-                  Effect.catchCause((cause) =>
-                    Effect.logWarning("A failed rewind left a folder partly restored", {
-                      cwd: snapshot.cwd,
-                      cause,
-                    }),
-                  ),
+          Effect.onExit((exit) =>
+            Exit.isSuccess(exit)
+              ? Effect.forEach(snapshots, discard, { discard: true })
+              : Effect.forEach(
+                  snapshots.toReversed(),
+                  (snapshot) =>
+                    withWorkspaceLock(
+                      snapshot.cwd,
+                      checkpointStore.restoreCheckpoint(snapshot),
+                    ).pipe(
+                      Effect.matchCauseEffect({
+                        onSuccess: () => discard(snapshot),
+                        // The snapshot is then the only copy of the folder's edits.
+                        onFailure: (cause) =>
+                          Effect.logWarning(
+                            "A failed rewind left a folder partly restored; its snapshot is kept",
+                            { cwd: snapshot.cwd, checkpointRef: snapshot.checkpointRef, cause },
+                          ),
+                      }),
+                    ),
+                  { discard: true },
                 ),
-              { discard: true },
-            ),
-          ),
-          Effect.ensuring(
-            Effect.suspend(() =>
-              Effect.forEach(
-                snapshots,
-                (snapshot) =>
-                  checkpointStore
-                    .deleteCheckpointRefs({
-                      cwd: snapshot.cwd,
-                      checkpointRefs: [snapshot.checkpointRef],
-                    })
-                    .pipe(Effect.ignore),
-                { discard: true },
-              ),
-            ),
           ),
         );
       },

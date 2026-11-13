@@ -642,6 +642,18 @@ it.live("puts restored folders back when a later folder's restore fails", () =>
       const recorded = yield* thread.recorded;
       assert.deepEqual(recorded.runs, ["completed", "completed"]);
       assert.deepEqual(recorded.checkpoints.api, { 0: "ready", 1: "ready", 2: "ready" });
+      // Only the folder that could not be put back keeps its snapshot of the edits.
+      const snapshots = yield* Effect.forEach([folders.shop, folders.api, folders.web], (cwd) =>
+        thread
+          .run(cwd, "for-each-ref", "--format=%(refname)", "refs/t3/")
+          .pipe(
+            Effect.map((refs) => refs.split("\n").filter((ref) => ref.includes("/pre-rewind"))),
+          ),
+      );
+      assert.deepEqual(
+        snapshots.map((refs) => refs.length),
+        [folders.shop, folders.api, folders.web].map((cwd) => (cwd === last ? 1 : 0)),
+      );
     }),
   ),
 );
