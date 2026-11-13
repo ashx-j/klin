@@ -154,13 +154,16 @@ export const scanFolders = Effect.fn("WorkspaceFolders.scan")(function* (
   const root = path.resolve(
     expandHomePath(input.workspaceRoot.trim(), yield* HostProcess.HomeDirectory),
   );
-  const names = (yield* fileSystem
-    .readDirectory(root)
-    .pipe(
-      Effect.mapError(
-        () => new WorkspaceFoldersError({ operation: "scan", detail: `Could not read ${root}.` }),
-      ),
-    )).toSorted();
+  const names = (yield* fileSystem.readDirectory(root).pipe(
+    Effect.mapError(
+      (cause) =>
+        new WorkspaceFoldersError({
+          operation: "scan",
+          detail: `Could not read ${root}.`,
+          cause,
+        }),
+    ),
+  )).toSorted();
   const codeWorkspaceFile = names.find((name) => name.endsWith(CODE_WORKSPACE_EXTENSION)) ?? null;
   const listed =
     codeWorkspaceFile === null ? null : yield* readCodeWorkspaceFolders(root, codeWorkspaceFile);
@@ -236,13 +239,16 @@ const make = Effect.gen(function* () {
   const { realPath, classify } = yield* folderProbes;
 
   const readProject = Effect.fn("WorkspaceFolders.readProject")(function* (projectId: ProjectId) {
-    const row = yield* projects
-      .get(projectId)
-      .pipe(
-        Effect.mapError(
-          () => new WorkspaceFoldersError({ operation: "list", detail: "Failed to read project." }),
-        ),
-      );
+    const row = yield* projects.get(projectId).pipe(
+      Effect.mapError(
+        (cause) =>
+          new WorkspaceFoldersError({
+            operation: "list",
+            detail: "Failed to read project.",
+            cause,
+          }),
+      ),
+    );
     if (Option.isNone(row)) {
       return yield* new WorkspaceFoldersError({
         operation: "list",
@@ -302,7 +308,8 @@ const make = Effect.gen(function* () {
         .findContaining(input.worktreePath)
         .pipe(
           Effect.mapError(
-            (cause) => new WorkspaceFoldersError({ operation: "list", detail: cause.detail }),
+            (cause) =>
+              new WorkspaceFoldersError({ operation: "list", detail: cause.detail, cause }),
           ),
         );
       return taskFolder === null

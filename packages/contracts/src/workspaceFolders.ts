@@ -115,6 +115,7 @@ export class WorkspaceFoldersError extends Schema.TaggedError<WorkspaceFoldersEr
   {
     operation: Schema.Literals(["list", "scan"]),
     detail: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
