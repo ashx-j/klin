@@ -9891,7 +9891,15 @@ it.layer(layerThreadProjectMoveTest)("moving a thread to another project", (it) 
           afterSequence: 0,
           eventType: "thread.metadata-updated",
         })
-        .pipe(Stream.runHead, Effect.forkChild);
+        .pipe(
+          // Sending the message also updates metadata, so wait for the move's own event.
+          Stream.filter(
+            ({ event }) =>
+              event.type === "thread.metadata-updated" && event.payload.projectId === billing,
+          ),
+          Stream.runHead,
+          Effect.forkChild,
+        );
       assert.deepEqual(yield* move.move({ threadId, projectId: billing, byOwnAgent: true }), {
         projectId: billing,
         worktreePath: null,
