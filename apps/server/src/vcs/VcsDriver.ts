@@ -77,6 +77,11 @@ export interface VcsCheckpointOps {
    * Null otherwise. One status, where a capture stages the whole worktree.
    */
   readonly resolveCleanHead: (cwd: string) => Effect.Effect<string | null, VcsError>;
+  /** HEAD's commit at `at`, in epoch seconds, from HEAD's reflog. Null without a reflog. */
+  readonly resolveHeadAt: (input: {
+    readonly cwd: string;
+    readonly at: number;
+  }) => Effect.Effect<string | null, VcsError>;
   /** Snapshots a folder that was clean at `head` from that commit, without reading its files. */
   readonly captureHeadCheckpoint: (
     input: VcsCaptureHeadCheckpointInput,

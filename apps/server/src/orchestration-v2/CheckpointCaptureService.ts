@@ -182,6 +182,7 @@ export const layer: Layer.Layer<
           ordinalWithinScope: run.ordinal,
           capturedAt,
           baselineCapturedAt: run.requestedAt,
+          startedAt: run.startedAt ?? run.requestedAt,
           baselineRecorded: context.repositoryScopesWithBaseline.includes(target.id),
           ...excluded(target),
         });

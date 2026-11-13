@@ -1480,6 +1480,18 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       return (yield* hasFlaggedIndexEntries(cwd)) ? null : head;
     }),
 
+    resolveHeadAt: Effect.fn("GitVcsDriver.checkpoints.resolveHeadAt")(function* (input) {
+      const result = yield* execute({
+        operation: "GitVcsDriver.checkpoints.resolveHeadAt",
+        cwd: input.cwd,
+        // A bare number would count reflog entries; "@<seconds> <zone>" is a timestamp.
+        args: ["rev-parse", "--verify", "--quiet", `HEAD@{@${input.at} +0000}^{commit}`],
+        allowNonZeroExit: true,
+      });
+      const head = result.stdout.trim();
+      return result.exitCode === 0 && head.length > 0 ? head : null;
+    }),
+
     captureHeadCheckpoint: Effect.fn("GitVcsDriver.checkpoints.captureHeadCheckpoint")(
       function* (input) {
         const operation = VcsProcess.CHECKPOINT_CAPTURE_OPERATION;

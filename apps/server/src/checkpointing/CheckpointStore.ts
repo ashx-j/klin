@@ -79,6 +79,12 @@ export class CheckpointStore extends Context.Service<
      */
     readonly resolveCleanHead: (cwd: string) => Effect.Effect<string | null, CheckpointStoreError>;
 
+    /** HEAD's commit at `at`, in epoch seconds, from HEAD's reflog. Null without a reflog. */
+    readonly resolveHeadAt: (input: {
+      readonly cwd: string;
+      readonly at: number;
+    }) => Effect.Effect<string | null, CheckpointStoreError>;
+
     /** Snapshots a folder that was clean at `head` from that commit, without reading its files. */
     readonly captureHeadCheckpoint: (
       input: CaptureHeadCheckpointInput,
@@ -141,6 +147,13 @@ export const make = Effect.gen(function* () {
     return yield* checkpoints.resolveCleanHead(cwd);
   });
 
+  const resolveHeadAt: CheckpointStore["Service"]["resolveHeadAt"] = Effect.fn(
+    "CheckpointStore.resolveHeadAt",
+  )(function* (input) {
+    const checkpoints = yield* resolveCheckpoints(input.cwd);
+    return yield* checkpoints.resolveHeadAt(input);
+  });
+
   const captureHeadCheckpoint: CheckpointStore["Service"]["captureHeadCheckpoint"] = Effect.fn(
     "CheckpointStore.captureHeadCheckpoint",
   )(function* (input) {
@@ -187,6 +200,7 @@ export const make = Effect.gen(function* () {
     isGitRepository,
     captureCheckpoint,
     resolveCleanHead,
+    resolveHeadAt,
     captureHeadCheckpoint,
     hasCheckpointRef,
     restoreCheckpoint,

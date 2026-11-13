@@ -216,6 +216,8 @@ export interface CheckpointServiceV2Shape {
     readonly ordinalWithinScope: number;
     readonly capturedAt: DateTime.Utc;
     readonly baselineCapturedAt: DateTime.Utc;
+    /** When the run started: where HEAD was then is read from its reflog after a restart. */
+    readonly startedAt: DateTime.Utc;
     readonly baselineRecorded: boolean;
     readonly excludePaths?: ReadonlyArray<string>;
   }) => Effect.Effect<
@@ -912,19 +914,33 @@ export const layer: Layer.Layer<
             .hasCheckpointRef({ cwd, checkpointRef: baselineRef })
             .pipe(Effect.orElseSucceed(() => false));
           if (!baselineExists) {
+            const startedAt = Math.floor(DateTime.toEpochMillis(input.startedAt) / 1000);
+            // Unknown after a restart, but a commit that moved HEAD is in its reflog.
+            const startHead =
+              known !== undefined
+                ? cleanAtStart
+                : cleanHead === null
+                  ? null
+                  : yield* checkpointStore
+                      .resolveHeadAt({ cwd, at: startedAt })
+                      .pipe(Effect.orElseSucceed(() => null));
+            // Nothing is uncommitted and no commit is known to have moved HEAD: nothing to show.
+            if (
+              known === undefined &&
+              cleanHead !== null &&
+              (startHead === null || startHead === cleanHead)
+            )
+              return unchanged;
             // The turn started on a clean folder; its snapshot was left until one was needed.
-            if (known !== undefined && cleanAtStart !== null) {
+            if (startHead !== null) {
               yield* checkpointStore
                 .captureHeadCheckpoint({
                   cwd,
                   checkpointRef: baselineRef,
-                  head: cleanAtStart,
-                  seenAt: known.seenAt,
+                  head: startHead,
+                  seenAt: known?.seenAt ?? startedAt,
                 })
                 .pipe(Effect.ignore);
-            } else if (cleanHead !== null) {
-              // How the turn started is unknown and nothing is uncommitted: nothing to show.
-              return unchanged;
             }
           }
           return { changed: true as const, cleanHead };

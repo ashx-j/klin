@@ -253,6 +253,7 @@ it.effect(
                   }
                   return (yield* Ref.get(heads)).get(cwd) ?? startHead;
                 }),
+              resolveHeadAt: () => Effect.succeed(startHead),
               hasCheckpointRef: ({ checkpointRef }) =>
                 Ref.get(refs).pipe(Effect.map((current) => current.has(checkpointRef))),
               captureHeadCheckpoint: ({ cwd, head, checkpointRef }) =>
@@ -304,6 +305,7 @@ it.effect(
               ordinalWithinScope,
               capturedAt: scope.createdAt,
               baselineCapturedAt: scope.createdAt,
+              startedAt: scope.createdAt,
               baselineRecorded: false,
             }),
           );
@@ -362,6 +364,95 @@ it.effect(
           [{ scopeId: recorded[0]!.checkpoint.scopeId, status: "ready", files: [] }],
         );
       }).pipe(Effect.provide(layerTest));
+    }),
+);
+
+it.effect(
+  "lists a repository a turn fully committed when the server restarted during the turn",
+  () =>
+    Effect.gen(function* () {
+      const scope: OrchestrationV2CheckpointScope = {
+        id: CheckpointScopeId.make("checkpoint-scope:restart"),
+        threadId: ThreadId.make("thread:restart"),
+        runId: RunId.make("run:restart:1"),
+        nodeId: NodeId.make("node:restart:1"),
+        parentScopeId: null,
+        providerThreadId: ProviderThreadId.make("provider-thread:restart"),
+        kind: "root_run",
+        ordinalWithinParent: 0,
+        advancesAppRunCount: true,
+        cwd: "/wrapper",
+        createdAt: DateTime.makeUnsafe("2026-07-28T00:00:00.000Z"),
+      };
+      const thread = { projectId: ProjectId.make("project:restart"), worktreePath: null };
+      const repository = "/wrapper/api";
+      const [startHead, endHead] = ["a".repeat(40), "b".repeat(40)];
+      // The turn starts at 2000 seconds and commits everything at 3000.
+      const startedAt = DateTime.makeUnsafe(2_000_000);
+      const head = yield* Ref.make(startHead);
+      const refs = yield* Ref.make<ReadonlySet<string>>(new Set());
+      const snapshots = yield* Ref.make<ReadonlyArray<string>>([]);
+      // Each build of this layer is one server process; only the repository outlives it.
+      const layerProcess = CheckpointService.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            NodeServices.layer,
+            Layer.mock(WorkspaceFolders.WorkspaceFolders)({
+              forThread: () =>
+                Effect.succeed({
+                  folders: [{ name: "api", path: repository, isGitRepository: true }],
+                  extraRoots: [],
+                }),
+            }),
+            Layer.mock(CheckpointStore.CheckpointStore)({
+              isGitRepository: (cwd) => Effect.succeed(cwd === repository),
+              resolveCleanHead: () => Ref.get(head),
+              resolveHeadAt: ({ at }) => Effect.succeed(at < 3_000 ? startHead : endHead),
+              hasCheckpointRef: ({ checkpointRef }) =>
+                Ref.get(refs).pipe(Effect.map((current) => current.has(checkpointRef))),
+              captureHeadCheckpoint: ({ checkpointRef, head, seenAt }) =>
+                Ref.update(snapshots, (current) => [...current, `${head[0]} seen ${seenAt}`]).pipe(
+                  Effect.andThen(
+                    Ref.update(refs, (current) => new Set([...current, checkpointRef])),
+                  ),
+                ),
+              diffCheckpoints: () => Effect.succeed("1\t0\tfile.ts\0"),
+              listAuthoredPaths: () => Effect.succeed(null),
+            }),
+          ),
+        ),
+        Layer.provideMerge(NodeCrypto.layer),
+      );
+
+      yield* CheckpointService.CheckpointServiceV2.use((checkpoints) =>
+        checkpoints.captureBaseline({ scope, ordinalWithinScope: 0, thread }),
+      ).pipe(Effect.provide(layerProcess));
+      yield* Ref.set(head, endHead);
+      const captured = yield* Effect.gen(function* () {
+        const checkpoints = yield* CheckpointService.CheckpointServiceV2;
+        const [api] = yield* checkpoints.repositoryScopes({ rootScope: scope, ...thread });
+        return yield* checkpoints.captureRepository({
+          scope: api!,
+          runId: scope.runId!,
+          nodeId: scope.nodeId,
+          ordinalWithinScope: 1,
+          capturedAt: scope.createdAt,
+          baselineCapturedAt: scope.createdAt,
+          startedAt,
+          baselineRecorded: false,
+        });
+      }).pipe(Effect.provide(layerProcess));
+
+      assert.deepEqual(
+        Option.toArray(captured).map(({ baseline, checkpoint }) => ({
+          baseline: baseline?.status,
+          files: checkpoint.files.map((file) => file.path),
+        })),
+        [{ baseline: "ready", files: ["file.ts"] }],
+      );
+      // The baseline is the commit the turn started on, dated when it started.
+      assert.deepEqual(yield* Ref.get(snapshots), ["a seen 2000", "b seen undefined"]);
     }),
 );
 
