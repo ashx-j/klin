@@ -1497,10 +1497,21 @@ export function repositoryRewindCheckpoint<
     if (first === undefined || checkpoint.ordinalWithinScope < first.ordinalWithinScope)
       first = checkpoint;
   }
+  if (first === undefined) return null;
+  if (first.ordinalWithinScope === targetOrdinal) return first;
   // A later run's own checkpoint holds that run's changes, not the state before them.
-  return first !== undefined && (first.ordinalWithinScope === targetOrdinal || first.runId === null)
-    ? first
-    : null;
+  if (first.runId !== null) return null;
+  // So does a baseline after a run whose own snapshot failed.
+  const baselineOrdinal = first.ordinalWithinScope;
+  return checkpoints.some(
+    (checkpoint) =>
+      checkpoint.runId !== null &&
+      checkpoint.status !== "stale" &&
+      checkpoint.ordinalWithinScope > targetOrdinal &&
+      checkpoint.ordinalWithinScope < baselineOrdinal,
+  )
+    ? null
+    : first;
 }
 
 export const OrchestrationV2CheckpointRollbackRequest = Schema.Struct({
