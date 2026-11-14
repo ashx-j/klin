@@ -35,6 +35,7 @@ import {
   groupSidebarThreadsByProject,
   resolveSidebarFolderDot,
   sidebarFolderExpansionKeys,
+  withoutRemovedCheckout,
 } from "./Sidebar.logic";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
@@ -193,6 +194,59 @@ function makeLatestRun(overrides?: {
       overrides?.completedAt !== undefined ? overrides.completedAt : "2026-03-09T10:05:00.000Z",
   };
 }
+
+describe("withoutRemovedCheckout", () => {
+  const worktree = { branch: "t3/task", worktreePath: "/worktrees/task" };
+  const local = { branch: "main", worktreePath: null };
+  const removed = { branch: null, worktreePath: null };
+
+  it.each([
+    {
+      why: "status still loading",
+      thread: worktree,
+      isRepo: undefined,
+      inTaskFolder: undefined,
+      to: worktree,
+    },
+    {
+      why: "a live checkout",
+      thread: worktree,
+      isRepo: true,
+      inTaskFolder: undefined,
+      to: worktree,
+    },
+    {
+      why: "a removed worktree outside any task folder",
+      thread: worktree,
+      isRepo: false,
+      inTaskFolder: false,
+      to: removed,
+    },
+    {
+      why: "a worktree that is not a repository before the task folder lookup answers",
+      thread: worktree,
+      isRepo: false,
+      inTaskFolder: undefined,
+      to: worktree,
+    },
+    {
+      why: "a plain task folder",
+      thread: worktree,
+      isRepo: false,
+      inTaskFolder: true,
+      to: worktree,
+    },
+    {
+      why: "a local thread whose project folder is not a repository",
+      thread: local,
+      isRepo: false,
+      inTaskFolder: undefined,
+      to: removed,
+    },
+  ])("$why", ({ thread, isRepo, inTaskFolder, to }) => {
+    expect(withoutRemovedCheckout(thread, { isRepo }, inTaskFolder)).toEqual(to);
+  });
+});
 
 describe("orderItemsByPreferredIds", () => {
   it("resolves legacy preference aliases without materializing project state", () => {

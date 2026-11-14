@@ -248,7 +248,11 @@ export function collapseExpandedComposerCursor(
   return collapsedCursor;
 }
 
-export function detectComposerTrigger(text: string, cursorInput: number): ComposerTrigger | null {
+export function detectComposerTrigger(
+  text: string,
+  cursorInput: number,
+  skillTriggerCharacter = "$",
+): ComposerTrigger | null {
   const cursor = clampCursor(text, cursorInput);
   const tokenStart = tokenStartForCursor(text, cursor);
   const token = text.slice(tokenStart, cursor);
@@ -270,12 +274,18 @@ export function detectComposerTrigger(text: string, cursorInput: number): Compos
       rangeEnd: cursor,
     };
   }
-  const skillPrefix = /^\p{Sc}/u.exec(token);
+  // The default $ keeps accepting every currency symbol as an alias.
+  const skillPrefix =
+    skillTriggerCharacter === "$"
+      ? /^\p{Sc}/u.exec(token)?.[0]
+      : token.startsWith(skillTriggerCharacter)
+        ? skillTriggerCharacter
+        : undefined;
   if (skillPrefix) {
-    if (isCurrencyAmountQuery(token.slice(skillPrefix[0].length))) return null;
+    if (isCurrencyAmountQuery(token.slice(skillPrefix.length))) return null;
     return {
       kind: "skill",
-      query: token.slice(skillPrefix[0].length),
+      query: token.slice(skillPrefix.length),
       rangeStart: tokenStart,
       rangeEnd: cursor,
     };
@@ -305,6 +315,7 @@ export function pastedPathQueryLength(
 export function composerStateAtPromptEnd(
   text: string,
   literalText = false,
+  skillTriggerCharacter = "$",
 ): {
   cursor: number;
   trigger: ComposerTrigger | null;
@@ -314,7 +325,11 @@ export function composerStateAtPromptEnd(
     cursor,
     trigger: literalText
       ? null
-      : detectComposerTrigger(text, expandCollapsedComposerCursor(text, cursor)),
+      : detectComposerTrigger(
+          text,
+          expandCollapsedComposerCursor(text, cursor),
+          skillTriggerCharacter,
+        ),
   };
 }
 

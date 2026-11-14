@@ -297,6 +297,37 @@ describe("detectComposerTrigger", () => {
     expect(detectComposerTrigger(text, text.length)).toBeNull();
   });
 
+  it.each(["+", "!", "\\", "𑿝"])("opens the skill picker with a configured %s", (symbol) => {
+    const text = `Use ${symbol}image later`;
+    const cursor = `Use ${symbol}image`.length;
+    expect(detectComposerTrigger(text, cursor, symbol)).toEqual({
+      kind: "skill",
+      query: "image",
+      rangeStart: 4,
+      rangeEnd: cursor,
+    });
+  });
+
+  it.each(["a+image", "use +image ", "$image", "€image"])(
+    "does not open a + skill picker for %j",
+    (text) => expect(detectComposerTrigger(text, text.length, "+")).toBeNull(),
+  );
+
+  it("keeps other menus and draft restore working with a configured trigger", () => {
+    expect(detectComposerTrigger("+image", 6)).toBeNull();
+    for (const text of ["@src", "#123", "/model"]) {
+      expect(detectComposerTrigger(text, text.length, "+")).toEqual(
+        detectComposerTrigger(text, text.length),
+      );
+    }
+    expect(composerStateAtPromptEnd("$review +image", false, "+").trigger).toEqual({
+      kind: "skill",
+      query: "image",
+      rangeStart: 8,
+      rangeEnd: 14,
+    });
+  });
+
   it("detects a pull request number at a token boundary", () => {
     const text = "Compare this with #8737";
 

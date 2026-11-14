@@ -60,6 +60,7 @@ export interface SettingsSearchItem {
   readonly scope?: SettingsSearchScope;
   readonly desktopOnly?: boolean;
   readonly macOnly?: boolean;
+  readonly nonMacOnly?: boolean;
   readonly windowsOnly?: boolean;
   readonly releaseChannelOnly?: boolean;
   readonly secretsFeatureOnly?: boolean;
@@ -647,6 +648,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["test voice speech model transcription recognition"],
   },
   {
+    id: "keep-running-in-tray",
+    title: "Keep running in tray",
+    to: "/settings/labs",
+    searchTerms: ["beta system tray background close window minimize hide server agents remote"],
+    desktopOnly: true,
+    nonMacOnly: true,
+  },
+  {
     id: "auto-settle-inactive-threads",
     title: "Auto-settle inactive threads",
     to: "/settings/threads",
@@ -743,6 +752,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Open pull requests and changes panels proactively",
     to: "/settings/diffs",
     searchTerms: ["proactive automatically open diff pull request pr right panel agent completion"],
+  },
+  {
+    id: "skill-trigger-character",
+    title: "Skill trigger character",
+    to: "/settings/chat",
+    searchTerms: ["composer skill picker symbol dollar $ plus + keyboard layout"],
   },
   {
     id: "skills-in-slash-menu",
@@ -1245,6 +1260,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["commands scripts setup run dev server checkout worktree t3.json import"],
   },
   {
+    id: "project-repositories",
+    title: "Repositories",
+    to: "/settings/projects",
+    searchTerms: ["tracked folders multi repo workspace code-workspace rescan add folder"],
+  },
+  {
     id: "environment-icon",
     title: "Environment icon",
     to: "/settings/access",
@@ -1547,6 +1568,7 @@ export function settingsForThisPlatform(
       (!item.releaseChannelOnly || isElectron || HOSTED_APP_CHANNEL !== null) &&
       (!item.secretsFeatureOnly || isSecretsFeatureEnabled) &&
       (!item.macOnly || isMacPlatform(platform)) &&
+      (!item.nonMacOnly || !isMacPlatform(platform)) &&
       (!item.windowsOnly || isWindowsPlatform(platform)),
   );
 }

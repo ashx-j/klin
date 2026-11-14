@@ -24,12 +24,27 @@ describe("resolveSendEnvMode", () => {
   it.each(["local", "worktree"] as const)(
     "uses local for non-git projects requesting %s",
     (mode) => {
-      expect(resolveSendEnvMode({ requestedEnvMode: mode, isGitRepo: false })).toBe("local");
+      expect(
+        resolveSendEnvMode({
+          requestedEnvMode: mode,
+          isGitRepo: false,
+          tracksGitRepositories: false,
+        }),
+      ).toBe("local");
     },
   );
 
   it.each(["local", "worktree"] as const)("preserves %s for git repositories", (mode) => {
-    expect(resolveSendEnvMode({ requestedEnvMode: mode, isGitRepo: true })).toBe(mode);
+    expect(
+      resolveSendEnvMode({ requestedEnvMode: mode, isGitRepo: true, tracksGitRepositories: false }),
+    ).toBe(mode);
+    expect(
+      resolveSendEnvMode({ requestedEnvMode: mode, isGitRepo: false, tracksGitRepositories: true }),
+    ).toBe(mode);
+    // Tracked folders that could not be read leave the request for the server to refuse.
+    expect(
+      resolveSendEnvMode({ requestedEnvMode: mode, isGitRepo: false, tracksGitRepositories: null }),
+    ).toBe(mode);
   });
 });
 

@@ -21,6 +21,7 @@ import {
   resolveProviderInstanceEnabled,
   ServerSettings,
   ServerSettingsPatch,
+  skillTriggerCharacterError,
   withIdleCompaction,
 } from "./settings.ts";
 
@@ -40,6 +41,27 @@ const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
 const encodeServerSettingsPatch = Schema.encodeSync(ServerSettingsPatch);
 const decodeClaudeSettings = Schema.decodeUnknownSync(ClaudeSettings);
+
+describe("skill trigger character", () => {
+  it("defaults to $", () => {
+    expect(decodeClientSettings({}).skillTriggerCharacter).toBe("$");
+  });
+
+  it.each(["$", "+", "!", "*", "\\", "€", "𑿝"])("accepts %s", (symbol) => {
+    expect(decodeClientSettingsPatch({ skillTriggerCharacter: symbol })).toEqual({
+      skillTriggerCharacter: symbol,
+    });
+    expect(skillTriggerCharacterError(symbol)).toBeNull();
+  });
+
+  it.each(["", " ", "a", "ő", "1", "++", " +", "+\n", "@", "#", "/", "\u200b"])(
+    "rejects %j",
+    (symbol) => {
+      expect(() => decodeClientSettingsPatch({ skillTriggerCharacter: symbol })).toThrow();
+      expect(skillTriggerCharacterError(symbol)).toEqual(expect.any(String));
+    },
+  );
+});
 
 describe("storage cleanup settings", () => {
   it("keeps cleanup disabled for existing installations", () => {
