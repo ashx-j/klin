@@ -38,6 +38,8 @@ import {
 
 import packageJson from "../../package.json" with { type: "json" };
 import * as ServerConfig from "../config.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as OrchestrationEventStore from "../persistence/OrchestrationEventStore.ts";
 import { authenticateRawRouteWithScope } from "../http.ts";
 import { forkParked } from "../serverActivation.ts";
 import {
@@ -54,7 +56,12 @@ import { makePluginFailures } from "./pluginFailures.ts";
 import { discoverPlugins, type DiscoveredPlugin } from "./pluginDiscovery.ts";
 import * as PluginInstaller from "./PluginInstaller.ts";
 import * as PluginMcpTools from "./PluginMcpTools.ts";
-import { makePluginsConfig, type PluginConfigError } from "./pluginsConfig.ts";
+import { type FoundPlugin, makeRevisionCache, recordLocalChanges } from "./pluginFleet.ts";
+import {
+  makePluginsConfig,
+  type PluginConfigError,
+  type PluginsConfigFile,
+} from "./pluginsConfig.ts";
 import * as PluginSettingsStore from "./PluginSettingsStore.ts";
 import * as PluginStorage from "./PluginStorage.ts";
 import { makePluginStates, manifestOf, type PluginRecord } from "./pluginStates.ts";
@@ -245,7 +252,9 @@ const make = Effect.gen(function* () {
     settings: yield* PluginSettingsStore.PluginSettingsStore,
     storage: yield* PluginStorage.PluginStorage,
     mcpTools: yield* PluginMcpTools.PluginMcpTools,
+    eventStore: yield* OrchestrationEventStore.OrchestrationEventStore,
   };
+  const environment = yield* ServerEnvironment.ServerEnvironment;
   const settingsStore = services.settings;
 
   const pluginsDir = path.join(config.stateDir, "plugins");
@@ -262,10 +271,13 @@ const make = Effect.gen(function* () {
   const hostScope = yield* Effect.scope;
 
   const failures = yield* makePluginFailures;
+  // Why each plugin can't be copied to the user's other machines, from the last discovery.
+  const sharingProblems = new Map<PluginId, string>();
   const pluginStates = yield* makePluginStates({
     records,
     config: pluginsConfig.current,
     failures,
+    sharingProblem: (pluginId) => sharingProblems.get(pluginId),
   });
   const currentStates = pluginStates.current;
   const publishStates = pluginStates.publish;
@@ -428,10 +440,26 @@ const make = Effect.gen(function* () {
               failure: { stage: "load", message: errorText(Cause.squash(definition.cause)) },
             });
           }
+          // Beside its settings, so removing the plugin deletes it with them.
+          const dataDir = path.join(config.stateDir, "plugin-data", plugin.id, "files");
+          const madeDataDir = yield* fs
+            .makeDirectory(dataDir, { recursive: true })
+            .pipe(Effect.result);
+          if (madeDataDir._tag === "Failure") {
+            return yield* setRecord(plugin.id, {
+              status: "failed",
+              failure: {
+                stage: "activate",
+                message: `Could not create its data folder: ${madeDataDir.failure.message}`,
+              },
+            });
+          }
           const activation = makePluginActivation();
           const api = makePluginApi({
             id: plugin.id,
             rootDir: plugin.rootDir,
+            environmentId: yield* environment.getEnvironmentId,
+            dataDir,
             settingsSchema: manifest.settingsSchema,
             activation,
             context,
@@ -516,8 +544,67 @@ const make = Effect.gen(function* () {
   const startsAtDiscovery = (plugin: DiscoveredPlugin, found: Found) =>
     initialRecord(plugin, found).status === "loading";
 
+  const revisionOf = makeRevisionCache();
+  /**
+   * A linked folder is shared only when it is linked or reloaded (`restart`), so a half-made edit
+   * stays on its machine until the developer asks for it to run, and then gets the current time.
+   */
+  const recordFleetChanges = Effect.fn("PluginHost.recordFleetChanges")(function* (
+    plugins: ReadonlyArray<DiscoveredPlugin>,
+    complete: boolean,
+    restart: PluginId | undefined,
+  ) {
+    const now = yield* Clock.currentTimeMillis;
+    const ledger = (yield* pluginsConfig.current).fleet?.entries ?? {};
+    for (const pluginId of sharingProblems.keys()) {
+      if (!plugins.some((plugin) => plugin.id === pluginId)) sharingProblems.delete(pluginId);
+    }
+    const found = yield* Effect.forEach(plugins, (plugin) => {
+      const manifest = manifestOf(plugin);
+      if (manifest === undefined) return Effect.succeed([]);
+      const linked = plugin.source === "dev";
+      const shared = ledger[plugin.id];
+      if (linked && plugin.id !== restart && shared !== undefined && shared.revision !== null) {
+        return Effect.succeed([]);
+      }
+      sharingProblems.delete(plugin.id);
+      return revisionOf(plugin.rootDir).pipe(
+        Effect.provideService(FileSystem.FileSystem, fs),
+        Effect.provideService(Path.Path, path),
+        Effect.map((folder): ReadonlyArray<FoundPlugin> => [
+          {
+            pluginId: plugin.id,
+            version: manifest.version,
+            revision: folder.revision,
+            modifiedAt: linked ? now : folder.modifiedAt,
+          },
+        ]),
+        Effect.catchTags({
+          PluginFolderUnsharableError: (error) =>
+            Effect.sync(() => {
+              sharingProblems.set(plugin.id, error.reason);
+              return [];
+            }),
+        }),
+      );
+    }).pipe(Effect.map((lists) => lists.flat()));
+    const record = (config: PluginsConfigFile) =>
+      recordLocalChanges({
+        config,
+        found,
+        present: new Set(plugins.map((plugin) => plugin.id)),
+        complete,
+        now,
+      });
+    if (record(yield* pluginsConfig.current) === undefined) return;
+    yield* pluginsConfig.write((latest) => record(latest) ?? latest);
+  });
+
   // Startup tolerates an unreadable plugins.json; an explicit reload reports it instead.
-  const discover = Effect.fn("PluginHost.discover")(function* (lenient: boolean) {
+  const discover = Effect.fn("PluginHost.discover")(function* (
+    lenient: boolean,
+    restart?: PluginId,
+  ) {
     const current = yield* pluginsConfig.reread(lenient);
     const { plugins, complete } = yield* discoverPlugins({
       pluginsDir,
@@ -526,10 +613,8 @@ const make = Effect.gen(function* () {
       Effect.provideService(FileSystem.FileSystem, fs),
       Effect.provideService(Path.Path, path),
     );
-    // Only folders that are gone: one it could not read, such as on a drive mounted later, would
-    // otherwise come back turned off.
-    if (complete) {
-      yield* pluginsConfig.forgetMissing(new Set(plugins.map((plugin) => plugin.id))).pipe(
+    const tolerated = <A>(effect: Effect.Effect<A, PluginConfigError>) =>
+      effect.pipe(
         Effect.catchTags({
           PluginConfigError: (error) =>
             lenient
@@ -537,7 +622,12 @@ const make = Effect.gen(function* () {
               : Effect.fail(error),
         }),
       );
+    // Only folders that are gone: one it could not read, such as on a drive mounted later, would
+    // otherwise come back turned off.
+    if (complete) {
+      yield* tolerated(pluginsConfig.forgetMissing(new Set(plugins.map((plugin) => plugin.id))));
     }
+    yield* tolerated(recordFleetChanges(plugins, complete, restart));
     const found: Found = { enabled: current.enabled ?? {}, crashed: current.crashed ?? {} };
     return { plugins, found };
   });
@@ -563,7 +653,7 @@ const make = Effect.gen(function* () {
         Effect.gen(function* () {
           const record = yield* findRecord(pluginId);
           if (record === undefined) return yield* new PluginNotFoundError({ pluginId });
-          yield* pluginsConfig.writeEnabled(pluginId, enabled);
+          yield* pluginsConfig.writeEnabled(pluginId, enabled, yield* Clock.currentTimeMillis);
           if ("failure" in record.plugin) return yield* publishStates;
           if (enabled && (record.status === "active" || record.status === "loading")) {
             return yield* publishStates;
@@ -582,10 +672,14 @@ const make = Effect.gen(function* () {
   );
 
   /** `restart` also restarts that plugin with fresh code. */
-  const rediscover = Effect.fn("PluginHost.rediscover")(function* (restart: PluginId | undefined) {
+  /** `shareLinked` records a linked `restart` for other machines, as the user's own Reload does. */
+  const rediscover = Effect.fn("PluginHost.rediscover")(function* (
+    restart: PluginId | undefined,
+    shareLinked = false,
+  ) {
     // Reloading a plugin that stopped the server clears that failure; it stays off until turned on.
     if (restart !== undefined) yield* pluginsConfig.clearCrash(restart);
-    const { plugins, found } = yield* discover(false);
+    const { plugins, found } = yield* discover(false, shareLinked ? restart : undefined);
     if (restart !== undefined) yield* stopPlugin(restart);
     const known = yield* Ref.get(records);
     const next = plugins.map((plugin) => ({
@@ -628,21 +722,23 @@ const make = Effect.gen(function* () {
     return plugins;
   });
 
-  const reload: PluginHost["Service"]["reload"] = Effect.fn("PluginHost.reload")(
-    function* (pluginId) {
-      yield* runLifecycle(
-        rediscover(pluginId).pipe(
-          Effect.flatMap((plugins) =>
-            plugins.some((plugin) => plugin.id === pluginId)
-              ? Effect.void
-              : Effect.fail(new PluginNotFoundError({ pluginId })),
-          ),
+  const restartPlugin = Effect.fn("PluginHost.restart")(function* (
+    pluginId: PluginId,
+    shareLinked: boolean,
+  ) {
+    yield* runLifecycle(
+      rediscover(pluginId, shareLinked).pipe(
+        Effect.flatMap((plugins) =>
+          plugins.some((plugin) => plugin.id === pluginId)
+            ? Effect.void
+            : Effect.fail(new PluginNotFoundError({ pluginId })),
         ),
-      );
-      yield* awaitActivation(pluginId);
-      return yield* stateOf(pluginId);
-    },
-  );
+      ),
+    );
+    yield* awaitActivation(pluginId);
+    return yield* stateOf(pluginId);
+  });
+  const reload: PluginHost["Service"]["reload"] = (pluginId) => restartPlugin(pluginId, true);
 
   const rescan = Effect.fn("PluginHost.rescan")(function* () {
     // The docs tell people to copy plugin folders here, so it has to exist.
@@ -687,8 +783,10 @@ const make = Effect.gen(function* () {
         ),
       ),
     stop: stopPlugin,
+    stateOf,
     rescan: rediscover(undefined).pipe(Effect.asVoid),
     reload,
+    restart: (pluginId) => restartPlugin(pluginId, false),
     config: pluginsConfig.current,
     writeConfig: pluginsConfig.write,
   });

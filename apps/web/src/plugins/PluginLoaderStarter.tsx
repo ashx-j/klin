@@ -9,6 +9,7 @@ import { drewPluginsLastTime, pluginUiEnvironmentsAtom } from "./pluginFollow";
 const loadPluginWatch = () => import("./pluginWatch");
 const loadPluginLoader = () => import("./pluginLoader");
 const loadPluginStyles = () => import("./pluginStyles");
+const loadPluginFleetSync = () => import("./pluginFleetSync");
 
 const whenIdle = (run: () => void) => {
   if (typeof window.requestIdleCallback === "function") {
@@ -21,9 +22,35 @@ const whenIdle = (run: () => void) => {
 
 export function PluginLoaderStarter() {
   const environmentIds = useAtomValue(pluginUiEnvironmentsAtom);
-  return environmentIds.map((environmentId) => (
-    <PluginEnvironmentLoader key={environmentId} environmentId={environmentId} />
-  ));
+  return (
+    <>
+      <PluginFleetStarter />
+      {environmentIds.map((environmentId) => (
+        <PluginEnvironmentLoader key={environmentId} environmentId={environmentId} />
+      ))}
+    </>
+  );
+}
+
+// Plugin sharing copies plugins between the user's machines whenever this window is open, so a
+// machine that connects later catches up without a visit to Settings. It waits for an idle moment.
+function PluginFleetStarter() {
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- starts and stops a sync loop that lives outside React
+  useEffect(() => {
+    let cancelled = false;
+    let stop: (() => void) | undefined;
+    const cancelIdle = whenIdle(() => {
+      void loadPluginFleetSync().then((module) => {
+        if (!cancelled) stop = module.startPluginFleetSync();
+      });
+    });
+    return () => {
+      cancelled = true;
+      cancelIdle();
+      stop?.();
+    };
+  }, []);
+  return null;
 }
 
 // Downloads the web plugin runtime only once a plugin of the environment has an active web part,

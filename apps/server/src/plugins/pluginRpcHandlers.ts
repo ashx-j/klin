@@ -1,7 +1,11 @@
 import {
   type AuthEnvironmentScope,
   PluginError,
+  type PluginCreateDownloadUrlInput,
   type PluginCreateUploadUrlInput,
+  type PluginFleetApplyInput,
+  type PluginFleetSetKeptOffInput,
+  type PluginFleetSetSharingInput,
   type PluginId,
   type PluginInvokeInput,
   type PluginLinkInput,
@@ -76,6 +80,21 @@ export const makePluginRpcHandlers = (
         Effect.map((output) => ({ output })),
         Effect.mapError(toRpcError(input.pluginId)),
       ),
+  [WS_METHODS.pluginsCreateDownloadUrl]: (input: PluginCreateDownloadUrlInput) =>
+    uploads
+      .issueDownloadUrl(input.pluginId)
+      .pipe(Effect.mapError((error) => new PluginError({ message: error.message }))),
+  [WS_METHODS.pluginsFleetApply]: (input: PluginFleetApplyInput) =>
+    installer.applyFleet(input.entry).pipe(Effect.mapError(toRpcError(input.entry.pluginId))),
+  [WS_METHODS.pluginsFleetSetSharing]: (input: PluginFleetSetSharingInput) =>
+    installer.setSharing(input.sharing).pipe(
+      Effect.as({ sharing: input.sharing }),
+      Effect.mapError((error) => new PluginError({ message: error.message })),
+    ),
+  [WS_METHODS.pluginsFleetSetKeptOff]: (input: PluginFleetSetKeptOffInput) =>
+    installer
+      .setKeptOff(input.pluginId, input.keptOff)
+      .pipe(Effect.as(input), Effect.mapError(toRpcError(input.pluginId))),
   [WS_METHODS.pluginsSubscribe]: (input: PluginSubscribeInput) =>
     pluginHost.subscribe(input).pipe(
       Stream.map((value) => ({ value })),

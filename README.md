@@ -4,7 +4,15 @@ Klin is a personal fork of [T3 Code](https://github.com/pingdotgg/t3code), a des
 
 Klin merges T3 Code's release and nightly tags, never arbitrary upstream `main`, and adds features that upstream doesn't ship. It has no mobile app of its own. T3 Code's phone app reaches Klin servers through T3 Connect.
 
-Each push to `main` publishes a Windows installer and a Linux server archive on the [releases page](https://github.com/ashx-j/klin/releases). You can also run Klin from source.
+## Installing
+
+Windows x64: download [Klin-Setup-x64.exe](https://github.com/ashx-j/klin/releases/latest/download/Klin-Setup-x64.exe) and run it. The installer is unsigned, so Windows SmartScreen asks you to confirm. The app updates itself from [Klin's releases](https://github.com/ashx-j/klin/releases), and every push to `main` publishes a new one.
+
+There is no macOS or Linux desktop build. On those systems, run Klin from source. When the desktop app connects to a Linux x64 machine over SSH, it installs the server from its own release on that machine.
+
+## Next to T3 Code
+
+Klin installs next to T3 Code and shares none of its state. It has its own app name and ID, data folder (`~/.klin` instead of `~/.t3`), default port (4773 instead of 3773), `klin` command and `klin://` links, and update feed. Threads, settings and paired devices in one app don't appear in the other.
 
 ## Using Klin from T3 Code's phone app
 

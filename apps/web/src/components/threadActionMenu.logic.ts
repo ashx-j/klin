@@ -1,4 +1,9 @@
-import type { ContextMenuItem } from "@t3tools/contracts";
+import {
+  type ContextMenuItem,
+  isListedThreadLineage,
+  type OrchestrationV2AppThreadLineage,
+} from "@t3tools/contracts";
+import type { EnvironmentProject } from "@t3tools/client-runtime/state/models";
 import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled";
 
 export type ThreadActionMenuId =
@@ -6,6 +11,8 @@ export type ThreadActionMenuId =
   | "new-thread-on-branch"
   | "filter-by-project"
   | "turn-into-project"
+  | "move-to-project"
+  | `move-to-project:${string}`
   | "project-settings"
   | "pin"
   | "unpin"
@@ -95,6 +102,46 @@ export interface ThreadActionMenuState {
   readonly canShareWithGuest?: boolean;
   /** A No project thread with its own folder, on a server that can promote it. */
   readonly canTurnIntoProject?: boolean;
+  /** From `threadMoveTargets`. Empty hides Move to project. */
+  readonly moveTargets?: ReadonlyArray<Pick<EnvironmentProject, "id" | "title">>;
+}
+
+/**
+ * Projects a thread can move to: the other live projects on its environment, without No project.
+ * Side chats and subagents move with their parent, and a server without the move offers none.
+ * A thread keeps a real worktree, so it only lists projects of that repository. The server
+ * compares the actual Git directories and refuses anything else.
+ */
+export function threadMoveTargets<
+  Project extends Pick<
+    EnvironmentProject,
+    "environmentId" | "id" | "archivedAt" | "isScratch" | "repositoryIdentity"
+  >,
+>(
+  thread: Pick<EnvironmentProject, "environmentId"> & {
+    readonly projectId: EnvironmentProject["id"];
+    readonly worktreePath: string | null;
+    readonly lineage: OrchestrationV2AppThreadLineage;
+  },
+  projects: ReadonlyArray<Project>,
+  serverMovesThreads: boolean | undefined,
+): ReadonlyArray<Project> {
+  if (serverMovesThreads !== true || !isListedThreadLineage(thread.lineage)) return [];
+  const current = projects.find(
+    (project) => project.environmentId === thread.environmentId && project.id === thread.projectId,
+  );
+  const repository =
+    thread.worktreePath !== null && current?.isScratch !== true
+      ? current?.repositoryIdentity?.canonicalKey
+      : undefined;
+  return projects.filter(
+    (project) =>
+      project.environmentId === thread.environmentId &&
+      project.id !== thread.projectId &&
+      project.archivedAt == null &&
+      project.isScratch !== true &&
+      (repository === undefined || project.repositoryIdentity?.canonicalKey === repository),
+  );
 }
 
 /** Local navigation, read markers, and copying remain available to read-only clients. */
@@ -200,6 +247,20 @@ export function buildThreadActionMenuItems(
             label: "Turn into project",
             icon: "folder-plus",
             disabled: state.isRunning,
+          },
+        ]
+      : []),
+    ...(state.moveTargets && state.moveTargets.length > 0
+      ? [
+          {
+            id: "move-to-project" as const,
+            label: "Move to project",
+            icon: "folder-input",
+            disabled: state.isRunning,
+            children: state.moveTargets.map((project) => ({
+              id: `move-to-project:${project.id}` as const,
+              label: project.title,
+            })),
           },
         ]
       : []),

@@ -4,6 +4,7 @@
 import {
   AuthOrchestrationReadScope,
   AuthSettingsWriteScope,
+  EnvironmentId,
   type PluginState,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -16,6 +17,9 @@ import * as Stream from "effect/Stream";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as EnvironmentTheme from "../environmentTheme.ts";
 import * as ServerConfig from "../config.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as OrchestrationEventStore from "../persistence/OrchestrationEventStore.ts";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as PluginHost from "./PluginHost.ts";
 import * as PluginMcpTools from "./PluginMcpTools.ts";
 import * as PluginSettingsStore from "./PluginSettingsStore.ts";
@@ -34,6 +38,11 @@ const layerThemes = Layer.mock(EnvironmentTheme.EnvironmentThemeService)({
     Effect.sync(() => {
       publishedThemeDirectories.push(directories);
     }),
+});
+
+const testEnvironmentId = "environment-plugin-host-test";
+const layerEnvironment = Layer.mock(ServerEnvironment.ServerEnvironment)({
+  getEnvironmentId: Effect.succeed(EnvironmentId.make(testEnvironmentId)),
 });
 
 /**
@@ -61,7 +70,12 @@ export const layerHost = (
       ),
       Layer.provide(ServerSecretStore.layer),
       Layer.provide(themes),
+      Layer.provide(layerEnvironment),
       Layer.provideMerge(PluginMcpTools.layer),
+      // The real store on an in-memory database, so feed tests append and read real rows.
+      Layer.provideMerge(
+        OrchestrationEventStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory)),
+      ),
     ),
   );
 
@@ -121,6 +135,16 @@ export const streamStates = (host: PluginHost.PluginHost["Service"]) =>
 
 export const listStates = (host: PluginHost.PluginHost["Service"]) =>
   streamStates(host).pipe(Stream.runHead, Effect.map(Option.getOrThrow));
+
+/** What this machine shares with the user's other machines, by plugin id. */
+export const fleetEntries = (host: PluginHost.PluginHost["Service"]) =>
+  host.streamForClient([AuthOrchestrationReadScope, AuthSettingsWriteScope]).pipe(
+    Stream.runHead,
+    Effect.map(Option.getOrThrow),
+    Effect.map(
+      ({ fleet }) => new Map((fleet?.entries ?? []).map((entry) => [entry.pluginId, entry])),
+    ),
+  );
 
 /** Resolves with the first list where every listed plugin has its expected status. */
 export const waitForStatuses = (
