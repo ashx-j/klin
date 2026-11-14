@@ -76,15 +76,15 @@ import {
   collapseExpandedComposerCursor,
   composerRequiresModifier,
   composerSubmissionIntentForKey,
-  composerStateAtPromptEnd,
-  detectComposerTrigger,
+  composerStateAtPromptEnd as composerStateAtPromptEndWithTrigger,
+  detectComposerTrigger as detectComposerTriggerWithTrigger,
   expandCollapsedComposerCursor,
   formatAssistantCitationForComposer,
   isPathSuggestionCurrent,
   extendReplacementRangeForTrailingSpace,
   replaceTextRange,
 } from "../../composer-logic";
-import { DEFAULT_COMPOSER_PLACEHOLDER } from "../../composerPlaceholder";
+import { composerPlaceholder } from "../../composerPlaceholder";
 import { deriveComposerSendState, getAntigravitySendBlockReason } from "../ChatView.logic";
 import {
   dataTransferHasComposerMention,
@@ -587,6 +587,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     editingQueuedAttachments,
     onRemoveEditingQueuedAttachment,
   } = props;
+  const { skillTriggerCharacter } = settings;
+  const detectComposerTrigger = (text: string, cursor: number) =>
+    detectComposerTriggerWithTrigger(text, cursor, skillTriggerCharacter);
+  const composerStateAtPromptEnd = (text: string, literalText = false) =>
+    composerStateAtPromptEndWithTrigger(text, literalText, skillTriggerCharacter);
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const composerDraftTargetKey = composerTargetKey(composerDraftTarget);
   const {
@@ -1444,7 +1449,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     if (typeof nextCustomAnswer !== "string") {
       if (lastSyncedPendingInputRef.current !== null) {
         promptRef.current = prompt;
-        const { cursor, trigger } = composerStateAtPromptEnd(prompt);
+        const { cursor, trigger } = composerStateAtPromptEndWithTrigger(
+          prompt,
+          false,
+          skillTriggerCharacter,
+        );
         setComposerCursor(cursor);
         resetComposerTrigger(trigger);
       }
@@ -1469,7 +1478,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     }
 
     promptRef.current = nextCustomAnswer;
-    const { cursor, trigger } = composerStateAtPromptEnd(nextCustomAnswer, isLiteralPendingAnswer);
+    const { cursor, trigger } = composerStateAtPromptEndWithTrigger(
+      nextCustomAnswer,
+      isLiteralPendingAnswer,
+      skillTriggerCharacter,
+    );
     setComposerCursor(cursor);
     resetComposerTrigger(trigger);
     setComposerHighlightedItemId(null);
@@ -1481,6 +1494,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     prompt,
     promptRef,
     resetComposerTrigger,
+    skillTriggerCharacter,
   ]);
 
   const composerSessionKey = `${draftId ?? ""}:${activeThreadId ?? ""}:${isLiteralPendingAnswer}`;
@@ -3230,6 +3244,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       readComposerSnapshotStable,
       resetComposerTrigger,
       setComposerTrigger,
+      skillTriggerCharacter,
       selectedModel,
       selectedInstanceId,
       reportedModelSelection,
@@ -3714,7 +3729,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                             ? "Choose a project above to start a thread"
                             : showProviderUnavailable
                               ? "Enable a provider in Settings to send a message"
-                              : (offeredPromptSuggestion ?? DEFAULT_COMPOSER_PLACEHOLDER)
+                              : (offeredPromptSuggestion ??
+                                composerPlaceholder(skillTriggerCharacter))
                     }
                     placeholderSuffix={
                       offeredPromptSuggestion !== null ? (
