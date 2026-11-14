@@ -24,6 +24,7 @@ import {
   type QuitConfirmationMode,
   SidebarProjectSortOrder,
   ScreenReaderAnnouncements,
+  skillTriggerCharacterError,
   ToolCallVisibility,
 } from "@t3tools/contracts/settings";
 import { desktopUpdateChannelOf } from "@t3tools/shared/cliRelease";
@@ -528,6 +529,9 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.showSkillsInSlashMenu !== DEFAULT_UNIFIED_SETTINGS.showSkillsInSlashMenu
       ? ["Show skills in slash menu"]
       : []),
+    ...(settings.skillTriggerCharacter !== DEFAULT_UNIFIED_SETTINGS.skillTriggerCharacter
+      ? ["Skill trigger character"]
+      : []),
     ...(settings.composerRichTextEnabled !== DEFAULT_UNIFIED_SETTINGS.composerRichTextEnabled
       ? ["Rich text composer"]
       : []),
@@ -659,6 +663,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       diffLayout: DEFAULT_UNIFIED_SETTINGS.diffLayout,
       proactivePanelsEnabled: DEFAULT_UNIFIED_SETTINGS.proactivePanelsEnabled,
       showSkillsInSlashMenu: DEFAULT_UNIFIED_SETTINGS.showSkillsInSlashMenu,
+      skillTriggerCharacter: DEFAULT_UNIFIED_SETTINGS.skillTriggerCharacter,
       composerRichTextEnabled: DEFAULT_UNIFIED_SETTINGS.composerRichTextEnabled,
       sendShortcut: DEFAULT_UNIFIED_SETTINGS.sendShortcut,
       followUpBehavior: DEFAULT_UNIFIED_SETTINGS.followUpBehavior,
@@ -1222,10 +1227,47 @@ export function ChatSettingsPanel() {
             </Select>
           }
         />
+        <SettingsRow
+          {...searchableSetting("skill-trigger-character")}
+          description="Type this symbol to open the skill picker. Use one symbol other than @, # or /."
+          resetAction={
+            settings.skillTriggerCharacter !== DEFAULT_UNIFIED_SETTINGS.skillTriggerCharacter ? (
+              <SettingResetButton
+                label="skill trigger character"
+                onClick={() =>
+                  updateSettings({
+                    skillTriggerCharacter: DEFAULT_UNIFIED_SETTINGS.skillTriggerCharacter,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <DraftInput
+              size="sm"
+              className="w-16"
+              value={settings.skillTriggerCharacter}
+              onCommit={(next) => {
+                const error = skillTriggerCharacterError(next);
+                if (error === null) {
+                  updateSettings({ skillTriggerCharacter: next });
+                } else {
+                  toastManager.add({
+                    type: "error",
+                    title: "Skill trigger not changed",
+                    description: error,
+                  });
+                }
+              }}
+              spellCheck={false}
+              aria-label="Skill trigger character"
+            />
+          }
+        />
         <AdvancedSettings targetIds={[searchableSetting("skills-in-slash-menu").id]}>
           <SettingsRow
             {...searchableSetting("skills-in-slash-menu")}
-            description="Also include skills in the / command menu. Skills always appear when you type $."
+            description={`Also include skills in the / command menu. Skills always appear when you type ${settings.skillTriggerCharacter}.`}
             resetAction={
               settings.showSkillsInSlashMenu !== DEFAULT_UNIFIED_SETTINGS.showSkillsInSlashMenu ? (
                 <SettingResetButton

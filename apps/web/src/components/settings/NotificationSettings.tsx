@@ -1,6 +1,8 @@
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import { useState } from "react";
 
+import { APP_BASE_NAME } from "~/branding";
+
 import {
   hasDesktopNotifications,
   hasNotificationSound,
@@ -14,6 +16,7 @@ import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings"
 
 export function NotificationSettings() {
   const mode = useScopedSettings((settings) => settings.notificationMode);
+  const keepRunningInTray = useScopedSettings((settings) => settings.keepRunningInTray);
   const updateSettings = useUpdateScopedSettings();
   const [permissionMessage, setPermissionMessage] = useState<string | null>(null);
   const [requesting, setRequesting] = useState(false);
@@ -23,7 +26,7 @@ export function NotificationSettings() {
       {...searchableSetting("thread-notifications")}
       description={
         permissionMessage ??
-        "System alerts when a thread finishes, fails, or needs input or approval. Applies to this device while T3 Code is open."
+        `System alerts when a thread finishes, fails, or needs input or approval. Applies to this device while ${APP_BASE_NAME} is open${keepRunningInTray ? " or running in the tray" : ""}.`
       }
       control={
         <Select

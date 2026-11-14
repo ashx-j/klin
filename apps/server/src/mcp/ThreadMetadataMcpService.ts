@@ -4,6 +4,7 @@ import {
   type OrchestrationV2AppThread,
   type OrchestrationV2Command,
   type ThreadMetadataMcpAction,
+  type ThreadMetadataMcpMoveResult,
   type ThreadMetadataMcpUpdateInput,
   type ThreadMetadataMcpUpdateResult,
   ThreadId,
@@ -15,6 +16,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
+import * as ThreadProjectMove from "../project/ThreadProjectMove.ts";
 import type { McpInvocationScope } from "./McpInvocationContext.ts";
 import { threadNotFound } from "./threadAccess.ts";
 
@@ -24,7 +26,10 @@ export class ThreadMetadataMcpService extends Context.Service<
     readonly update: (
       scope: McpInvocationScope,
       input: ThreadMetadataMcpUpdateInput,
-    ) => Effect.Effect<ThreadMetadataMcpUpdateResult, OrchestratorMcpFailure>;
+    ) => Effect.Effect<
+      ThreadMetadataMcpUpdateResult | ThreadMetadataMcpMoveResult,
+      OrchestratorMcpFailure
+    >;
   }
 >()("t3/mcp/ThreadMetadataMcpService") {}
 
@@ -62,7 +67,9 @@ function commandId(input: {
 function metadataCommand(input: {
   readonly commandId: CommandId;
   readonly threadId: ThreadId;
-  readonly update: ThreadMetadataMcpUpdateInput;
+  readonly update: ThreadMetadataMcpUpdateInput & {
+    readonly action: Exclude<ThreadMetadataMcpAction, "move_project">;
+  };
 }): Extract<OrchestrationV2Command, { readonly type: "thread.metadata.update" }> {
   switch (input.update.action) {
     case "rename":
@@ -112,6 +119,7 @@ function resultFromThread(input: {
 const make = Effect.gen(function* () {
   const random = yield* SecureRandom.SecureRandom;
   const threadManagement = yield* ThreadManagementService.ThreadManagementService;
+  const threadProjectMove = yield* ThreadProjectMove.ThreadProjectMove;
 
   const update = Effect.fn("ThreadMetadataMcpService.update")(function* (
     scope: McpInvocationScope,
@@ -144,8 +152,23 @@ const make = Effect.gen(function* () {
     if (shell === null || shell.deletedAt !== null) {
       return yield* threadNotFound(threadManagement, threadId, `Thread ${threadId} was not found.`);
     }
+    if (input.action === "move_project") {
+      const moved = yield* threadProjectMove
+        .move({
+          threadId,
+          projectId: input.projectId!,
+          byOwnAgent: scope.thread?.threadId === threadId,
+        })
+        .pipe(
+          Effect.mapError((error) =>
+            failure("orchestration_error", `Unable to move thread ${threadId}: ${error.message}`),
+          ),
+        );
+      return { threadId, action: input.action, ...moved };
+    }
     const requestKey =
       input.clientRequestId === undefined ? yield* random.uuidV4() : input.clientRequestId;
+    const action = input.action;
     const updateCommandId = commandId({
       scope,
       threadId,
@@ -157,7 +180,7 @@ const make = Effect.gen(function* () {
         metadataCommand({
           commandId: updateCommandId,
           threadId,
-          update: input,
+          update: { ...input, action },
         }),
       )
       .pipe(
@@ -198,5 +221,7 @@ const make = Effect.gen(function* () {
 export const layer: Layer.Layer<
   ThreadMetadataMcpService,
   never,
-  SecureRandom.SecureRandom | ThreadManagementService.ThreadManagementService
+  | SecureRandom.SecureRandom
+  | ThreadManagementService.ThreadManagementService
+  | ThreadProjectMove.ThreadProjectMove
 > = Layer.effect(ThreadMetadataMcpService, make);

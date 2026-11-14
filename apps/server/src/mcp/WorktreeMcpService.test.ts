@@ -35,6 +35,7 @@ import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.t
 import * as ServerSettings from "../serverSettings.ts";
 import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
 import type * as McpInvocationContext from "./McpInvocationContext.ts";
+import * as TaskFolders from "../workspace/TaskFolders.ts";
 import * as WorktreeMcpService from "./WorktreeMcpService.ts";
 
 const environmentId = EnvironmentId.make("environment-worktree-test");
@@ -117,6 +118,8 @@ interface HarnessOptions {
   readonly deleteLocalBranchFails?: boolean;
   readonly createWorktreeGate?: Effect.Effect<void>;
   readonly existsFails?: boolean;
+  /** Plans a task folder for a project folder that is not a repository. */
+  readonly taskFolderStartedFromOrigin?: boolean;
 }
 
 const makeHarness = (options: HarnessOptions = {}) => {
@@ -328,6 +331,36 @@ const makeHarness = (options: HarnessOptions = {}) => {
         Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({
           runForThread,
         } satisfies Partial<ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"]>),
+        Layer.mock(TaskFolders.TaskFolders)({
+          plan: () =>
+            Effect.succeed(
+              options.taskFolderStartedFromOrigin === undefined
+                ? null
+                : {
+                    projectId,
+                    projectRoot: workspaceRoot,
+                    projectIsRepository: false,
+                    anchor: workspaceRoot,
+                    repositories: [],
+                    trackedRepositories: [],
+                  },
+            ),
+          create: (input) =>
+            Effect.succeed({
+              taskFolder: {
+                root: "/worktrees/project/task",
+                projectId,
+                projectRoot: workspaceRoot,
+                anchor: workspaceRoot,
+                projectPath: "/worktrees/project/task",
+                projectIsWorktree: false,
+                repositories: [],
+              },
+              branch: input.branch,
+              startedFromOrigin: options.taskFolderStartedFromOrigin ?? false,
+            }),
+          find: () => Effect.succeed(null),
+        }),
         Layer.mock(VcsStatusBroadcaster.VcsStatusBroadcaster)({
           refreshStatus,
         } satisfies Partial<VcsStatusBroadcaster.VcsStatusBroadcaster["Service"]>),
@@ -553,6 +586,19 @@ describe("t3_worktree_handoff", () => {
     return Effect.gen(function* () {
       const result = yield* runHandoff(harness, { branch: "feature/project-origin" });
       expect(harness.fetchWorktreeBaseCommit).toHaveBeenCalled();
+      expect(result.startedFromOrigin).toBe(true);
+    });
+  });
+
+  it.effect("reports a task folder whose repositories started from origin", () => {
+    const harness = makeHarness({ taskFolderStartedFromOrigin: true });
+    return Effect.gen(function* () {
+      const result = yield* runHandoff(harness, {
+        branch: "feature/repositories",
+        startFromOrigin: true,
+        runSetupScript: false,
+      });
+      expect(result.worktreePath).toBe("/worktrees/project/task");
       expect(result.startedFromOrigin).toBe(true);
     });
   });
