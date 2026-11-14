@@ -4,6 +4,7 @@ import {
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
   type ExecutionEnvironmentDescriptor,
 } from "@t3tools/contracts";
+import { ENVIRONMENT_LABEL_SUFFIX } from "@t3tools/shared/appIdentity";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -193,7 +194,7 @@ export const make = Effect.gen(function* () {
   const hostLibc = hostPlatform === "linux" ? yield* HostProcess.LinuxLibc : undefined;
   const environmentId = yield* identity.getEnvironmentId;
   const cwdBaseName = path.basename(serverConfig.cwd).trim();
-  const label = yield* resolveServerEnvironmentLabel({ cwdBaseName });
+  const label = `${yield* resolveServerEnvironmentLabel({ cwdBaseName })}${ENVIRONMENT_LABEL_SUFFIX}`;
   const machine = yield* detectServerEnvironmentMachineKind();
   const launcher = yield* resolveServiceLauncherMode();
   const serverSelfUpdate = resolveServerSelfUpdateCapability({

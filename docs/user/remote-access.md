@@ -6,8 +6,9 @@ machine. That machine must stay running and reachable while you work.
 ## T3 Connect
 
 T3 Connect makes an environment available to your other devices without setting
-up router forwarding. In the desktop app on the host, open **Settings →
-Sharing & access**, sign in, and enable **T3 Connect** for that environment.
+up router forwarding. For the desktop app on the host, run `klin connect link` in
+a terminal, then restart the app. T3 Connect accepts in-app sign-in only from
+T3 Code's own desktop app, so Klin's desktop app has no T3 Connect settings.
 
 For a command-line host, run:
 

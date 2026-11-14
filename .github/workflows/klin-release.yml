@@ -4,7 +4,8 @@
 # https://github.com/ashx-j/klin/releases/latest/download/Klin-Setup-x64.exe
 #
 # This replaces upstream T3 Code's release.yml and release-desktop.yml, which need T3's paid
-# runners, signing secrets and T3 Connect config. It keeps their build steps for these two targets.
+# runners and signing secrets. It keeps their build steps for these two targets, and like upstream's
+# preview builds it takes T3 Connect's public sign-in and relay identifiers from .env.example.
 # Pull requests that touch the release build or the desktop app run everything except the publish.
 name: Release
 
@@ -14,12 +15,16 @@ on:
       - main
   pull_request:
     paths:
+      - .env.example
       - .github/workflows/klin-release.yml
       - .github/actions/setup-ci-deps/**
+      - apps/server/src/cloud/publicConfig.ts
+      - apps/server/vite.config.ts
       - packages/shared/src/appIdentity.ts
       - packages/ssh/src/tunnel.ts
       - scripts/build-cli-archive.ts
       - scripts/build-desktop-artifact.ts
+      - scripts/lib/public-config.ts
       - scripts/smoke-cli-archive.ts
       - apps/desktop/**
   workflow_dispatch:
@@ -45,9 +50,10 @@ jobs:
         with:
           fetch-depth: 0
 
-      # <newest merged upstream release>-klin.<run number>. T3 Code never uses a "klin"
-      # prerelease, so no Klin version can name a T3 Code release. The run number only grows
-      # while this file keeps its name.
+      # <next upstream release Klin has merged toward>-klin.<run number>: T3's phone app offers an
+      # update when T3's newest release sorts above a server's version, so Klin sorts above every
+      # release it contains. A merged nightly counts as its release, a merged release as the next
+      # patch. No T3 tag says "klin", and the run number only grows while this file keeps its name.
       - name: Resolve version
         id: version
         shell: bash
@@ -60,14 +66,28 @@ jobs:
               break
             fi
           done < <(git ls-remote --tags --refs https://github.com/pingdotgg/t3code 'refs/tags/v*' \
-            | sed -nE 's#^([0-9a-f]{40})\trefs/tags/v([0-9]+\.[0-9]+\.[0-9]+)$#\2 \1#p' \
+            | sed -nE 's#^([0-9a-f]{40})\trefs/tags/v([0-9]+)\.([0-9]+)\.([0-9]+)(-[0-9A-Za-z.-]+)?$#\1 \2 \3 \4 \5#p' \
+            | awk '{ print $2 "." $3 "." ($5 == "" ? $4 + 1 : $4), $1 }' \
             | sort -rV)
           if [[ -z "$base" ]]; then
-            base="$(node -p 'require("./apps/server/package.json").version.split("-")[0]')"
+            base="$(node -p 'const [major, minor, patch] = require("./apps/server/package.json").version.split("-")[0].split("."); `${major}.${minor}.${Number(patch) + 1}`')"
           fi
           version="${base}-klin.${GITHUB_RUN_NUMBER}"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "Building Klin $version"
+
+      # The same public identifiers upstream builds into its own releases, parsed the way
+      # loadRepoEnv parses env files. Reading them here lets an upstream change reach Klin's next build.
+      - name: Read T3 Connect's public config
+        run: |
+          node -e '
+            const env = require("node:util").parseEnv(require("node:fs").readFileSync(".env.example", "utf8"));
+            for (const name of ["CLERK_PUBLISHABLE_KEY", "CLERK_JWT_TEMPLATE", "CLERK_CLI_OAUTH_CLIENT_ID", "RELAY_URL"]) {
+              const value = env[`T3CODE_${name}`]?.trim();
+              if (!value || value.includes("\n")) throw new Error(`.env.example has no usable T3CODE_${name}`);
+              console.log(`T3CODE_${name}=${value}`);
+            }
+          ' >> "$GITHUB_ENV"
 
       - name: Install build libraries
         run: |
@@ -120,6 +140,15 @@ jobs:
 
       - name: Smoke-test Linux server archive
         run: node scripts/smoke-cli-archive.ts --archive release-cli/* --expect-version "${{ steps.version.outputs.version }}"
+
+      # `status --json` reports `connect: null` when a build change stops building T3 Connect in.
+      # `env -i` hides this job's T3CODE_* variables, which the server would otherwise read at runtime.
+      - name: Check the server archive has T3 Connect
+        run: |
+          dir="$(mktemp -d)"
+          tar -xzf release-cli/*.tar.gz -C "$dir"
+          env -i HOME="$dir" "$dir"/t3-*/t3 status --json \
+            | node -e 'if (typeof JSON.parse(require("node:fs").readFileSync(0, "utf8")).connect?.enabled !== "boolean") throw new Error("The server archive has no T3 Connect config")'
 
       # Unsigned. GITHUB_REPOSITORY points the app's update feed at this repository's releases.
       - name: Build Windows installer

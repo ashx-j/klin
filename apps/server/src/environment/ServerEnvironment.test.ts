@@ -8,6 +8,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 
+import { ENVIRONMENT_LABEL_SUFFIX } from "@t3tools/shared/appIdentity";
 import { DEFAULT_SIGNAL_EXPORT } from "@t3tools/shared/observability";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
@@ -279,6 +280,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("ServerEnvironmen
       }).pipe(Effect.provide(layerServerEnvironment(baseDir)));
 
       expect(first.environmentId).toBe(second.environmentId);
+      expect(first.label.endsWith(ENVIRONMENT_LABEL_SUFFIX)).toBe(true);
       expect(first.orchestrationProtocolVersion).toBe(ORCHESTRATION_PROTOCOL_VERSION);
       expect(second.capabilities.repositoryIdentity).toBe(true);
       expect(second.capabilities.connectionProbe).toBe(true);

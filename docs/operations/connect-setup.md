@@ -6,12 +6,16 @@ provisioning instructions.
 
 ## Public application configuration
 
-T3 Connect is disabled in a fresh clone. To build against the production deployment, copy the
-repository-root example:
+Klin's release workflow and `vp run dev` use T3's production deployment, reading its identifiers
+from `.env.example`. Other builds from a fresh clone, such as `vp run build`, leave T3 Connect off.
+To build them against the production deployment, copy the repository-root example:
 
 ```sh
 cp .env.example .env
 ```
+
+T3 accepts desktop sign-in only from `t3code://app`, so Klin's desktop app has no in-app sign-in.
+Link it with `klin connect link`, then restart the app.
 
 For another deployment, set these values in the repository-root `.env` or `.env.local`:
 

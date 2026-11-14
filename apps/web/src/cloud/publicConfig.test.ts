@@ -1,3 +1,4 @@
+import { DESKTOP_CONNECT_SIGN_IN } from "@t3tools/shared/appIdentity";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { hasCloudPublicConfig } from "./publicConfig.ts";
@@ -69,10 +70,10 @@ describe("hasCloudPublicConfig", () => {
       expect(hasCloudPublicConfig()).toBe(expected);
     });
 
-    it("keeps production keys available in the Electron auth shell", () => {
+    it("follows the desktop sign-in switch in the Electron auth shell", () => {
       vi.stubGlobal("window", { location: new URL("file:///app/index.html"), desktopBridge: {} });
 
-      expect(hasCloudPublicConfig()).toBe(true);
+      expect(hasCloudPublicConfig()).toBe(DESKTOP_CONNECT_SIGN_IN);
     });
   });
 });

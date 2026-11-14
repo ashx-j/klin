@@ -21,16 +21,42 @@ type Environment = Readonly<Record<string, string | undefined>>;
 
 const REPO_ROOT = NodePath.resolve(NodeURL.fileURLToPath(import.meta.url), "../../..");
 
+// Every name resolvePublicConfig reads for T3 Connect's sign-in and relay, canonical first.
+const CONNECT_CONFIG_NAMES = [
+  [
+    "T3CODE_CLERK_PUBLISHABLE_KEY",
+    "VITE_CLERK_PUBLISHABLE_KEY",
+    "EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY",
+  ],
+  ["T3CODE_CLERK_JWT_TEMPLATE", "VITE_CLERK_JWT_TEMPLATE", "EXPO_PUBLIC_CLERK_JWT_TEMPLATE"],
+  ["T3CODE_CLERK_CLI_OAUTH_CLIENT_ID", "VITE_CLERK_CLI_OAUTH_CLIENT_ID"],
+  ["T3CODE_RELAY_URL", "VITE_T3CODE_RELAY_URL"],
+] as const;
+
 export function loadRepoEnv({
   baseEnv = process.env,
   repoRoot = REPO_ROOT,
+  connectFromExample = false,
 }: {
   readonly baseEnv?: Environment;
   readonly repoRoot?: string;
+  /**
+   * Klin's dev servers: T3 Connect's production identifiers from `.env.example` when no other
+   * source names any of them. Naming one, even empty, keeps the whole set out.
+   */
+  readonly connectFromExample?: boolean;
 } = {}): Record<string, string | undefined> {
   const rootEnv = readEnvFile(NodePath.join(repoRoot, ".env"));
   const localEnv = readEnvFile(NodePath.join(repoRoot, ".env.local"));
-  const config = resolvePublicConfig(baseEnv, localEnv, rootEnv);
+  const connectNamed = [baseEnv, localEnv, rootEnv].some((source) =>
+    CONNECT_CONFIG_NAMES.flat().some((name) => source[name] !== undefined),
+  );
+  const exampleEnv =
+    connectFromExample && !connectNamed ? readEnvFile(NodePath.join(repoRoot, ".env.example")) : {};
+  const connectExample = Object.fromEntries(
+    CONNECT_CONFIG_NAMES.map(([name]) => [name, exampleEnv[name]]),
+  );
+  const config = resolvePublicConfig(baseEnv, localEnv, rootEnv, connectExample);
 
   return {
     ...rootEnv,

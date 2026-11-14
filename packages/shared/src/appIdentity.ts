@@ -24,6 +24,19 @@ export const APP_DEV_URL_SCHEME = `${APP_URL_SCHEME}-dev`;
 /** The command the desktop app puts on PATH. Upstream: "t3". */
 export const CLI_COMMAND_NAME = "klin";
 
+/**
+ * Follows the machine name other devices see, in T3 Connect and T3 Code's phone app, so
+ * "homeserver (Klin)" sits next to T3 Code's "homeserver". Upstream: none.
+ */
+export const ENVIRONMENT_LABEL_SUFFIX = ` (${APP_NAME})`;
+
+/**
+ * T3 Connect's sign-in service accepts desktop requests only from T3 Code's `t3code://app`
+ * origin, so Klin's desktop app hides in-app sign-in and links with `klin connect link` instead.
+ * Upstream: true. Widened like PRODUCT_ANALYTICS_ENABLED.
+ */
+export const DESKTOP_CONNECT_SIGN_IN: boolean = false;
+
 /** First port a server tries. T3 Code scans 200 ports up from 3773, so stay out of that range. */
 export const DEFAULT_SERVER_PORT = 4773;
 

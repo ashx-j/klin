@@ -5,6 +5,7 @@ import type {
   ServerSelfUpdateCapability,
 } from "@t3tools/contracts";
 import type { ServerUpdateState } from "@t3tools/client-runtime/state/server";
+import { APP_SLUG } from "@t3tools/shared/appIdentity";
 import { compareSemverVersions, parseSemver } from "@t3tools/shared/semver";
 import * as Schema from "effect/Schema";
 
@@ -53,17 +54,23 @@ export function resolveVersionMismatch(
   if (!normalizedClientVersion || !normalizedServerVersion) {
     return null;
   }
+  const clientTag = parseSemver(normalizedClientVersion)?.prerelease[0];
+  const serverTag = parseSemver(normalizedServerVersion)?.prerelease[0];
+  // Klin and T3 Code each install only their own releases, so neither can update the other.
+  if ((clientTag === APP_SLUG) !== (serverTag === APP_SLUG)) {
+    return null;
+  }
 
   const clientCore = versionCore(normalizedClientVersion);
   const serverCore = versionCore(normalizedServerVersion);
-  const compareNightlyBuilds =
-    parseSemver(normalizedClientVersion)?.prerelease[0] === "nightly" &&
-    parseSemver(normalizedServerVersion)?.prerelease[0] === "nightly";
+  // Klin builds, like nightlies, share one core across many builds.
+  const compareFullVersions =
+    (clientTag === "nightly" || clientTag === APP_SLUG) && serverTag === clientTag;
   const serverIsBehind =
     parseSemver(clientCore) && parseSemver(serverCore)
       ? compareSemverVersions(
-          compareNightlyBuilds ? normalizedServerVersion : serverCore,
-          compareNightlyBuilds ? normalizedClientVersion : clientCore,
+          compareFullVersions ? normalizedServerVersion : serverCore,
+          compareFullVersions ? normalizedClientVersion : clientCore,
         ) < 0
       : normalizedServerVersion !== normalizedClientVersion;
   if (!serverIsBehind) {
